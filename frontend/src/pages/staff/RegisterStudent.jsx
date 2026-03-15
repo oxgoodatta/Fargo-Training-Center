@@ -33,6 +33,11 @@ const RegisterStudent = () => {
   const [signatureData, setSignatureData] = useState(null);
   const [signatureEmpty, setSignatureEmpty] = useState(true);
   
+  // New state for transaction ID fields
+  const [transactionId, setTransactionId] = useState('');
+  const [confirmTransactionId, setConfirmTransactionId] = useState('');
+  const [transactionIdError, setTransactionIdError] = useState('');
+  
   // Check if coming from admin
   const searchParams = new URLSearchParams(location.search);
   const isFromAdmin = searchParams.get('source') === 'admin';
@@ -63,6 +68,18 @@ const RegisterStudent = () => {
   useEffect(() => {
     fetchCourses();
   }, []);
+
+  // Auto-save signature when user draws
+  const handleSignatureChange = () => {
+    if (signatureRef.current && !signatureRef.current.isEmpty()) {
+      const signature = signatureRef.current.toDataURL();
+      setSignatureData(signature);
+      setSignatureEmpty(false);
+    } else {
+      setSignatureEmpty(true);
+      setSignatureData(null);
+    }
+  };
 
   const fetchCourses = async () => {
     try {
@@ -155,6 +172,19 @@ const RegisterStudent = () => {
     }
   }, [formData.email, searchMode]);
 
+  // Validate transaction IDs match
+  useEffect(() => {
+    if (formData.payment_method === 'momo' && transactionId && confirmTransactionId) {
+      if (transactionId !== confirmTransactionId) {
+        setTransactionIdError('Transaction IDs do not match');
+      } else {
+        setTransactionIdError('');
+      }
+    } else {
+      setTransactionIdError('');
+    }
+  }, [transactionId, confirmTransactionId, formData.payment_method]);
+
   const handleSelectStudent = (student) => {
     setSelectedStudent(student);
     setSearchMode('existing');
@@ -186,8 +216,8 @@ const RegisterStudent = () => {
     }
     
     if (step === 3) {
-      // Validate signature
-      if (signatureEmpty) {
+      // Check signature data
+      if (!signatureData || signatureEmpty) {
         toast.error('Please provide a signature');
         return;
       }
@@ -214,21 +244,32 @@ const RegisterStudent = () => {
     }
   };
 
-  const saveSignature = () => {
-    if (signatureRef.current && !signatureRef.current.isEmpty()) {
-      const signature = signatureRef.current.toDataURL();
-      setSignatureData(signature);
-      setSignatureEmpty(false);
-      toast.success('Signature saved');
-    } else {
-      toast.error('Please provide a signature first');
-    }
+  // Helper function to round to 2 decimal places
+  const roundToTwoDecimals = (value) => {
+    return Math.round((value || 0) * 100) / 100;
   };
 
   const handleSubmit = async () => {
     if (!signatureData) {
       toast.error('Signature is required');
       return;
+    }
+
+    if (!formData.amount_paid || parseFloat(formData.amount_paid) <= 0) {
+      toast.error('Please enter a valid amount');
+      return;
+    }
+
+    // Validate transaction ID for mobile money
+    if (formData.payment_method === 'momo') {
+      if (!transactionId || !confirmTransactionId) {
+        toast.error('Please enter both transaction ID and confirmation');
+        return;
+      }
+      if (transactionId !== confirmTransactionId) {
+        toast.error('Transaction IDs do not match');
+        return;
+      }
     }
     
     setLoading(true);
@@ -278,6 +319,9 @@ const RegisterStudent = () => {
         return;
       }
       
+      // Round the amount paid to 2 decimal places
+      const amountPaid = roundToTwoDecimals(parseFloat(formData.amount_paid));
+      
       // Create registration with signature
       const registrationData = {
         student_id: studentId,
@@ -285,7 +329,7 @@ const RegisterStudent = () => {
         course_name: selectedCourse.name,
         course_fee: selectedCourse.total_fee,
         branch: formData.branch,
-        registration_fee: formData.payment_method === 'cash' ? parseFloat(formData.amount_paid || selectedCourse.registration_fee) : selectedCourse.registration_fee,
+        registration_fee: amountPaid,
         total_fee: selectedCourse.total_fee,
         registration_date: new Date().toISOString().split('T')[0],
         status: 'active',
@@ -298,15 +342,18 @@ const RegisterStudent = () => {
       const regRes = await apiClient.post('/registrations/', registrationData);
       const newRegistration = regRes.data.registration;
       
+      // Create payment record with transaction IDs
       const paymentRecord = {
         registration_id: newRegistration.id,
         student_id: studentId,
-        amount: formData.payment_method === 'cash' ? parseFloat(formData.amount_paid || selectedCourse.registration_fee) : selectedCourse.registration_fee,
+        amount: amountPaid,
         payment_method: formData.payment_method,
         payment_location: formData.payment_location,
         collected_by_staff_id: staff?.id,
         momo_phone_number: formData.momo_phone || null,
         momo_provider: formData.momo_provider,
+        transaction_id: formData.payment_method === 'momo' ? transactionId : null,
+        confirm_transaction_id: formData.payment_method === 'momo' ? confirmTransactionId : null,
         payment_type: 'registration',
         status: 'completed'
       };
@@ -344,6 +391,14 @@ const RegisterStudent = () => {
       navigate('/staff/dashboard');
     }
   };
+
+  // Calculate rounded values for display
+  const amountPaidNum = roundToTwoDecimals(parseFloat(formData.amount_paid) || 0);
+  const registrationFeeNum = selectedCourse ? roundToTwoDecimals(selectedCourse.registration_fee) : 0;
+  const totalFeeNum = selectedCourse ? roundToTwoDecimals(selectedCourse.total_fee) : 0;
+  const registrationPortion = Math.min(amountPaidNum, registrationFeeNum);
+  const tuitionPortion = Math.max(0, amountPaidNum - registrationFeeNum);
+  const outstandingBalance = roundToTwoDecimals(totalFeeNum - amountPaidNum);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-primary-100 p-4">
@@ -644,13 +699,13 @@ const RegisterStudent = () => {
             </div>
           )}
 
-          {/* Step 3: Signature */}
+          {/* Step 3: Signature - Auto-save on draw */}
           {step === 3 && (
             <div className="space-y-4">
               <div className="bg-primary-50 p-4 rounded-lg">
                 <p className="text-sm text-primary-700 flex items-center">
                   <PenTool className="w-4 h-4 mr-2" />
-                  Please sign below to confirm registration
+                  Please sign below to confirm registration (auto-saved)
                 </p>
                 {selectedCourse && (
                   <p className="text-xs text-primary-600 mt-2">
@@ -662,6 +717,7 @@ const RegisterStudent = () => {
               <div className="border-2 border-gray-300 rounded-lg overflow-hidden bg-white">
                 <SignatureCanvas
                   ref={signatureRef}
+                  onEnd={handleSignatureChange}
                   canvasProps={{
                     className: 'w-full h-48',
                     style: { 
@@ -674,40 +730,33 @@ const RegisterStudent = () => {
                 />
               </div>
 
-              <div className="flex justify-center space-x-4">
+              <div className="flex justify-center">
                 <button
                   type="button"
                   onClick={clearSignature}
                   className="px-4 py-2 border border-gray-300 rounded-lg flex items-center hover:bg-gray-50"
                 >
                   <RotateCcw className="w-4 h-4 mr-2" />
-                  Clear
-                </button>
-                <button
-                  type="button"
-                  onClick={saveSignature}
-                  className="px-4 py-2 bg-secondary-500 text-white rounded-lg flex items-center hover:bg-secondary-600"
-                >
-                  <Save className="w-4 h-4 mr-2" />
-                  Save Signature
+                  Clear Signature
                 </button>
               </div>
 
-              {signatureData && (
+              {signatureData && !signatureEmpty && (
                 <div className="bg-green-50 p-3 rounded-lg text-green-700 text-sm flex items-center">
                   <CheckCircle className="w-4 h-4 mr-2" />
-                  Signature saved successfully
+                  Signature captured successfully
                 </div>
               )}
             </div>
           )}
 
-          {/* Step 4: Payment */}
+          {/* Step 4: Payment with Transaction ID - FIXED SCROLL ISSUE */}
           {step === 4 && selectedCourse && (
             <div className="space-y-4">
               <div className="bg-blue-50 p-4 rounded-lg">
-                <p className="text-sm text-blue-800">Registration Fee: {formatCurrency(selectedCourse.registration_fee)}</p>
-                <p className="text-sm text-blue-800">Total Course Fee: {formatCurrency(selectedCourse.total_fee)}</p>
+                <p className="text-sm text-blue-800">Registration Fee: {formatCurrency(registrationFeeNum)}</p>
+                <p className="text-sm text-blue-800">Tuition Fee: {formatCurrency(selectedCourse.tuition_fee)}</p>
+                <p className="text-sm text-blue-800 font-semibold">Total Course Fee: {formatCurrency(totalFeeNum)}</p>
                 {signatureData && (
                   <p className="text-xs text-green-600 mt-2 flex items-center">
                     <CheckCircle className="w-3 h-3 mr-1" />
@@ -721,7 +770,11 @@ const RegisterStudent = () => {
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
-                    onClick={() => setFormData({...formData, payment_method: 'cash'})}
+                    onClick={() => {
+                      setFormData({...formData, payment_method: 'cash'});
+                      setTransactionId('');
+                      setConfirmTransactionId('');
+                    }}
                     className={`p-3 border rounded-lg flex items-center justify-center space-x-2 ${
                       formData.payment_method === 'cash' ? 'border-green-500 bg-green-50' : 'border-gray-300'
                     }`}
@@ -731,7 +784,9 @@ const RegisterStudent = () => {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setFormData({...formData, payment_method: 'momo'})}
+                    onClick={() => {
+                      setFormData({...formData, payment_method: 'momo'});
+                    }}
                     className={`p-3 border rounded-lg flex items-center justify-center space-x-2 ${
                       formData.payment_method === 'momo' ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
                     }`}
@@ -781,25 +836,90 @@ const RegisterStudent = () => {
                       />
                     </div>
                   </div>
+
+                  {/* Transaction ID fields */}
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Transaction ID *</label>
+                    <input
+                      type="text"
+                      value={transactionId}
+                      onChange={(e) => setTransactionId(e.target.value)}
+                      className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
+                      placeholder="Enter mobile money transaction ID"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Confirm Transaction ID *</label>
+                    <input
+                      type="text"
+                      value={confirmTransactionId}
+                      onChange={(e) => setConfirmTransactionId(e.target.value)}
+                      className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400 ${
+                        transactionIdError ? 'border-red-500' : ''
+                      }`}
+                      placeholder="Re-enter transaction ID to confirm"
+                    />
+                    {transactionIdError && (
+                      <p className="text-xs text-red-600 mt-1">{transactionIdError}</p>
+                    )}
+                  </div>
+
+                  {/* FIXED: Amount field for MoMo - with scroll prevention */}
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Amount Paid (₵) *</label>
+                    <input
+                      type="number"
+                      value={formData.amount_paid}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === '' || !isNaN(parseFloat(value))) {
+                          // Round to 2 decimal places when setting
+                          if (value !== '') {
+                            const rounded = Math.round(parseFloat(value) * 100) / 100;
+                            setFormData({...formData, amount_paid: rounded.toString()});
+                          } else {
+                            setFormData({...formData, amount_paid: value});
+                          }
+                        }
+                      }}
+                      onWheel={(e) => e.target.blur()} // Prevents scroll wheel from changing value
+                      max={totalFeeNum}
+                      min="0"
+                      step="0.01"
+                      className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
+                      placeholder="Enter amount paid"
+                    />
+                  </div>
                 </>
               )}
 
+              {/* FIXED: Amount field for Cash - with scroll prevention */}
               {formData.payment_method === 'cash' && (
                 <div>
-                  <label className="block text-sm font-medium mb-2">Amount Paid (₵)</label>
+                  <label className="block text-sm font-medium mb-2">Amount Paid (₵) *</label>
                   <input
                     type="number"
                     value={formData.amount_paid}
-                    onChange={(e) => setFormData({...formData, amount_paid: e.target.value})}
-                    max={selectedCourse.registration_fee}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === '' || !isNaN(parseFloat(value))) {
+                        // Round to 2 decimal places when setting
+                        if (value !== '') {
+                          const rounded = Math.round(parseFloat(value) * 100) / 100;
+                          setFormData({...formData, amount_paid: rounded.toString()});
+                        } else {
+                          setFormData({...formData, amount_paid: value});
+                        }
+                      }
+                    }}
+                    onWheel={(e) => e.target.blur()} // Prevents scroll wheel from changing value
+                    max={totalFeeNum}
+                    min="0"
+                    step="0.01"
                     className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
-                    placeholder="0.00"
+                    placeholder="Enter amount paid"
                   />
-                  {formData.amount_paid && parseFloat(formData.amount_paid) < selectedCourse.registration_fee && (
-                    <p className="text-xs text-yellow-600 mt-1">
-                      Outstanding balance: {formatCurrency(selectedCourse.registration_fee - parseFloat(formData.amount_paid))}
-                    </p>
-                  )}
                 </div>
               )}
 
@@ -826,6 +946,41 @@ const RegisterStudent = () => {
                   </button>
                 </div>
               </div>
+
+              {/* Payment Summary - FIXED DECIMAL HANDLING WITH ROUNDING */}
+              {formData.amount_paid && parseFloat(formData.amount_paid) > 0 && (
+                <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                  <h3 className="font-medium text-gray-700 mb-2">Payment Summary</h3>
+                  <div className="space-y-1 text-sm">
+                    <div className="flex justify-between">
+                      <span>Registration Fee:</span>
+                      <span className="font-medium">{formatCurrency(registrationFeeNum)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Amount Paid:</span>
+                      <span className="font-medium text-green-600">{formatCurrency(amountPaidNum)}</span>
+                    </div>
+                    <div className="border-t border-gray-200 my-1 pt-1">
+                      <div className="flex justify-between font-semibold">
+                        <span>Allocation:</span>
+                        <span></span>
+                      </div>
+                      <div className="flex justify-between text-xs pl-2">
+                        <span>→ Registration portion:</span>
+                        <span>{formatCurrency(registrationPortion)}</span>
+                      </div>
+                      <div className="flex justify-between text-xs pl-2">
+                        <span>→ Tuition portion:</span>
+                        <span>{formatCurrency(tuitionPortion)}</span>
+                      </div>
+                    </div>
+                    <div className="flex justify-between font-semibold text-primary-700 border-t border-gray-200 pt-1 mt-1">
+                      <span>Outstanding Balance:</span>
+                      <span>{formatCurrency(outstandingBalance)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -851,7 +1006,7 @@ const RegisterStudent = () => {
             ) : (
               <button
                 onClick={handleSubmit}
-                disabled={loading || !signatureData}
+                disabled={loading || !signatureData || !formData.amount_paid || parseFloat(formData.amount_paid) <= 0}
                 className="px-6 py-2 bg-gradient-to-r from-secondary-500 to-secondary-600 text-white rounded-lg hover:shadow-lg disabled:opacity-50"
               >
                 {loading ? 'Processing...' : 'Complete Registration'}

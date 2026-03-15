@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
-  Bell, Send, MessageSquare, Phone, Users, 
+  Bell, Send, MessageSquare, Users, 
   Clock, CheckCircle, XCircle, AlertCircle, 
-  TrendingUp, Calendar, Filter, Download,
-  Smartphone, Mail, Settings, Plus, Trash2,
+  Calendar, Filter, Download,
+  Mail, Settings, Plus, Trash2,
   Edit, Eye, RefreshCw, DollarSign, BookOpen
 } from 'lucide-react';
 import { notificationService } from '../../api/services/notificationService';
@@ -22,11 +22,10 @@ const Notifications = () => {
   
   // Compose form state
   const [composeForm, setComposeForm] = useState({
-    recipients: 'all', // all, arrears, upcoming, custom
+    recipients: 'all',
     customRecipients: [],
     course_id: '',
     branch: '',
-    messageType: 'sms',
     template: '',
     subject: '',
     message: '',
@@ -41,18 +40,10 @@ const Notifications = () => {
     name: '',
     subject: '',
     message: '',
-    type: 'sms'
+    type: 'email'
   });
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState(null);
-
-  // SMS Credits state
-  const [smsCredits, setSmsCredits] = useState({
-    balance: 1250,
-    used: 3450,
-    total: 5000,
-    expiryDate: '2026-12-31'
-  });
 
   useEffect(() => {
     fetchData();
@@ -123,17 +114,35 @@ const Notifications = () => {
         return;
       }
 
+      if (!composeForm.subject.trim()) {
+        toast.error('Email subject is required');
+        return;
+      }
+
       let recipientList = [];
       
       // Build recipient list based on selection
       if (composeForm.recipients === 'all') {
-        recipientList = students.map(s => s.phone);
-      } else if (composeForm.recipients === 'arrears') {
-        recipientList = registrations
-          .filter(r => r.outstanding_balance > 0)
-          .map(r => r.student_phone)
-          .filter(Boolean);
-      } else if (composeForm.recipients === 'upcoming') {
+        recipientList = students
+          .filter(s => s.email)
+          .map(s => s.email);
+      } 
+      else if (composeForm.recipients === 'arrears') {
+        // Get registrations with outstanding balance
+        const arrearsRegs = registrations.filter(r => r.outstanding_balance > 0);
+        
+        // For each registration, find the student and get their email
+        recipientList = arrearsRegs
+          .map(reg => {
+            const student = students.find(s => s.id === reg.student_id);
+            return student?.email;
+          })
+          .filter(email => email); // Remove duplicates and undefined
+          
+        // Remove duplicates (in case student has multiple courses with arrears)
+        recipientList = [...new Set(recipientList)];
+      } 
+      else if (composeForm.recipients === 'upcoming') {
         // Students with upcoming training
         const upcoming = registrations.filter(r => {
           const regDate = new Date(r.registration_date);
@@ -141,16 +150,25 @@ const Notifications = () => {
           const daysDiff = Math.ceil((regDate - now) / (1000 * 60 * 60 * 24));
           return daysDiff <= 7 && daysDiff >= 0;
         });
-        recipientList = upcoming.map(r => r.student_phone).filter(Boolean);
+        
+        recipientList = upcoming
+          .map(reg => {
+            const student = students.find(s => s.id === reg.student_id);
+            return student?.email;
+          })
+          .filter(email => email);
+          
+        // Remove duplicates
+        recipientList = [...new Set(recipientList)];
       }
 
       if (recipientList.length === 0) {
-        toast.error('No recipients found');
+        toast.error('No recipients with email addresses found');
         return;
       }
 
       const notificationData = {
-        type: composeForm.messageType,
+        type: 'email',
         recipients: recipientList,
         subject: composeForm.subject,
         message: composeForm.message,
@@ -161,7 +179,7 @@ const Notifications = () => {
 
       const response = await notificationService.sendNotification(notificationData);
       
-      toast.success(`✅ SMS sent to ${response.data.sent_count} recipients`);
+      toast.success(`✅ Email sent to ${response.data.sent_count} recipients`);
       
       // Reset form
       setComposeForm({
@@ -169,7 +187,6 @@ const Notifications = () => {
         customRecipients: [],
         course_id: '',
         branch: '',
-        messageType: 'sms',
         template: '',
         subject: '',
         message: '',
@@ -182,7 +199,8 @@ const Notifications = () => {
       fetchNotifications();
       
     } catch (error) {
-      toast.error(error.response?.data?.error || 'Failed to send notification');
+      console.error('Send error:', error);
+      toast.error(error.response?.data?.error || 'Failed to send email');
     } finally {
       setLoading(false);
     }
@@ -195,6 +213,11 @@ const Notifications = () => {
         return;
       }
 
+      if (templateForm.type === 'email' && !templateForm.subject) {
+        toast.error('Email subject is required for email templates');
+        return;
+      }
+
       if (editingTemplate) {
         await notificationService.updateTemplate(editingTemplate.id, templateForm);
         toast.success('Template updated successfully');
@@ -204,7 +227,7 @@ const Notifications = () => {
       }
 
       setIsTemplateModalOpen(false);
-      setTemplateForm({ name: '', subject: '', message: '', type: 'sms' });
+      setTemplateForm({ name: '', subject: '', message: '', type: 'email' });
       setEditingTemplate(null);
       fetchTemplates();
       
@@ -229,8 +252,7 @@ const Notifications = () => {
     setComposeForm({
       ...composeForm,
       subject: template.subject || '',
-      message: template.message,
-      messageType: template.type || 'sms'
+      message: template.message
     });
     toast.success(`Template "${template.name}" applied`);
   };
@@ -283,80 +305,10 @@ const Notifications = () => {
       >
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-primary-800">Notifications & SMS</h1>
+            <h1 className="text-2xl font-bold text-primary-800">Email Notifications</h1>
             <p className="text-primary-600 mt-2">
-              Send automated reminders for arrears and upcoming training programs
+              Send email reminders for arrears and upcoming training programs
             </p>
-          </div>
-          <div className="flex items-center space-x-3">
-            <div className="bg-blue-50 px-4 py-2 rounded-xl flex items-center">
-              <Smartphone className="w-5 h-5 text-blue-600 mr-2" />
-              <div>
-                <p className="text-xs text-blue-600">SMS Credits</p>
-                <p className="text-lg font-bold text-blue-700">{smsCredits.balance.toLocaleString()}</p>
-              </div>
-            </div>
-            <button className="p-2 hover:bg-gray-100 rounded-lg">
-              <RefreshCw className="w-5 h-5 text-gray-600" />
-            </button>
-          </div>
-        </div>
-      </motion.div>
-
-      {/* SMS Credit Stats */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
-        className="grid grid-cols-1 md:grid-cols-4 gap-6"
-      >
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Total Credits</p>
-              <p className="text-2xl font-bold mt-2 text-gray-900">{smsCredits.total.toLocaleString()}</p>
-            </div>
-            <div className="bg-primary-100 p-3 rounded-lg">
-              <Smartphone className="w-6 h-6 text-primary-600" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Used</p>
-              <p className="text-2xl font-bold mt-2 text-gray-900">{smsCredits.used.toLocaleString()}</p>
-            </div>
-            <div className="bg-yellow-100 p-3 rounded-lg">
-              <Send className="w-6 h-6 text-yellow-600" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Remaining</p>
-              <p className="text-2xl font-bold mt-2 text-green-600">{smsCredits.balance.toLocaleString()}</p>
-            </div>
-            <div className="bg-green-100 p-3 rounded-lg">
-              <CheckCircle className="w-6 h-6 text-green-600" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Expiry Date</p>
-              <p className="text-lg font-bold mt-2 text-gray-900">
-                {new Date(smsCredits.expiryDate).toLocaleDateString()}
-              </p>
-            </div>
-            <div className="bg-purple-100 p-3 rounded-lg">
-              <Calendar className="w-6 h-6 text-purple-600" />
-            </div>
           </div>
         </div>
       </motion.div>
@@ -436,7 +388,7 @@ const Notifications = () => {
             }`}
           >
             <Send className="w-4 h-4 inline mr-2" />
-            Compose Message
+            Compose Email
           </button>
           <button
             onClick={() => setActiveTab('templates')}
@@ -490,7 +442,9 @@ const Notifications = () => {
                       </div>
                       <div>
                         <p className="font-medium text-gray-900">All Students</p>
-                        <p className="text-xs text-gray-500">{students.length} recipients</p>
+                        <p className="text-xs text-gray-500">
+                          {students.filter(s => s.email).length} with email
+                        </p>
                       </div>
                     </div>
                   </button>
@@ -543,70 +497,51 @@ const Notifications = () => {
                 </div>
               </div>
 
-              {/* Message Type & Template */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Message Type
-                  </label>
+              {/* Template Selection */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Use Template
+                </label>
+                <div className="flex">
                   <select
-                    value={composeForm.messageType}
-                    onChange={(e) => setComposeForm({ ...composeForm, messageType: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-secondary-400 focus:border-transparent"
+                    value={composeForm.template}
+                    onChange={(e) => {
+                      const template = templates.find(t => t.id.toString() === e.target.value);
+                      if (template) handleUseTemplate(template);
+                    }}
+                    className="flex-1 px-4 py-2 border border-gray-300 rounded-l-lg focus:ring-2 focus:ring-secondary-400 focus:border-transparent"
                   >
-                    <option value="sms">SMS (Text Message)</option>
-                    <option value="email">Email</option>
-                    <option value="both">SMS + Email</option>
+                    <option value="">Select a template...</option>
+                    {templates.map(template => (
+                      <option key={template.id} value={template.id}>{template.name}</option>
+                    ))}
                   </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Use Template
-                  </label>
-                  <div className="flex">
-                    <select
-                      value={composeForm.template}
-                      onChange={(e) => {
-                        const template = templates.find(t => t.id.toString() === e.target.value);
-                        if (template) handleUseTemplate(template);
-                      }}
-                      className="flex-1 px-4 py-2 border border-gray-300 rounded-l-lg focus:ring-2 focus:ring-secondary-400 focus:border-transparent"
-                    >
-                      <option value="">Select a template...</option>
-                      {templates.map(template => (
-                        <option key={template.id} value={template.id}>{template.name}</option>
-                      ))}
-                    </select>
-                    <button
-                      onClick={() => {
-                        setEditingTemplate(null);
-                        setTemplateForm({ name: '', subject: '', message: '', type: 'sms' });
-                        setIsTemplateModalOpen(true);
-                      }}
-                      className="px-4 py-2 bg-primary-50 text-primary-600 border border-l-0 border-gray-300 rounded-r-lg hover:bg-primary-100"
-                    >
-                      <Plus className="w-5 h-5" />
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => {
+                      setEditingTemplate(null);
+                      setTemplateForm({ name: '', subject: '', message: '', type: 'email' });
+                      setIsTemplateModalOpen(true);
+                    }}
+                    className="px-4 py-2 bg-primary-50 text-primary-600 border border-l-0 border-gray-300 rounded-r-lg hover:bg-primary-100"
+                  >
+                    <Plus className="w-5 h-5" />
+                  </button>
                 </div>
               </div>
 
-              {/* Subject (for email) */}
-              {(composeForm.messageType === 'email' || composeForm.messageType === 'both') && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Subject
-                  </label>
-                  <input
-                    type="text"
-                    value={composeForm.subject}
-                    onChange={(e) => setComposeForm({ ...composeForm, subject: e.target.value })}
-                    placeholder="Enter email subject..."
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-secondary-400 focus:border-transparent"
-                  />
-                </div>
-              )}
+              {/* Subject Line */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Subject <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={composeForm.subject}
+                  onChange={(e) => setComposeForm({ ...composeForm, subject: e.target.value })}
+                  placeholder="Enter email subject..."
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-secondary-400 focus:border-transparent"
+                />
+              </div>
 
               {/* Message Content */}
               <div>
@@ -616,16 +551,16 @@ const Notifications = () => {
                 <textarea
                   value={composeForm.message}
                   onChange={(e) => setComposeForm({ ...composeForm, message: e.target.value })}
-                  rows="6"
+                  rows="8"
                   placeholder="Type your message here... Use {{name}} for student name, {{amount}} for arrears amount, {{course}} for course name"
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-secondary-400 focus:border-transparent"
                 />
                 <div className="flex justify-between mt-2">
                   <p className="text-xs text-gray-500">
-                    Characters: {composeForm.message.length} | SMS credits: {Math.ceil(composeForm.message.length / 160)}
+                    Characters: {composeForm.message.length}
                   </p>
                   <p className="text-xs text-gray-500">
-                    Available variables: {'{{name}}'} {'{{amount}}'} {'{{course}}'} {'{{date}}'}
+                    Available variables: {'{{name}}'} {'{{amount}}'} {'{{course}}'} {'{{date}}'} {'{{branch}}'}
                   </p>
                 </div>
               </div>
@@ -680,7 +615,6 @@ const Notifications = () => {
                       customRecipients: [],
                       course_id: '',
                       branch: '',
-                      messageType: 'sms',
                       template: '',
                       subject: '',
                       message: '',
@@ -696,7 +630,7 @@ const Notifications = () => {
                 </button>
                 <button
                   onClick={handleSendNotification}
-                  disabled={loading || !composeForm.message.trim()}
+                  disabled={loading || !composeForm.message.trim() || !composeForm.subject.trim()}
                   className="px-6 py-2 bg-gradient-to-r from-secondary-500 to-secondary-600 text-white rounded-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
                 >
                   {loading ? (
@@ -707,7 +641,7 @@ const Notifications = () => {
                   ) : (
                     <>
                       <Send className="w-4 h-4 mr-2" />
-                      {composeForm.isScheduled ? 'Schedule Message' : 'Send Now'}
+                      {composeForm.isScheduled ? 'Schedule Email' : 'Send Now'}
                     </>
                   )}
                 </button>
@@ -719,11 +653,11 @@ const Notifications = () => {
           {activeTab === 'templates' && (
             <div>
               <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-semibold text-gray-900">Message Templates</h3>
+                <h3 className="text-lg font-semibold text-gray-900">Email Templates</h3>
                 <button
                   onClick={() => {
                     setEditingTemplate(null);
-                    setTemplateForm({ name: '', subject: '', message: '', type: 'sms' });
+                    setTemplateForm({ name: '', subject: '', message: '', type: 'email' });
                     setIsTemplateModalOpen(true);
                   }}
                   className="px-4 py-2 bg-gradient-to-r from-secondary-500 to-secondary-600 text-white rounded-lg hover:shadow-lg transition-all flex items-center"
@@ -743,8 +677,8 @@ const Notifications = () => {
                       <div className="flex items-start justify-between mb-2">
                         <div>
                           <h4 className="font-semibold text-gray-900">{template.name}</h4>
-                          <span className="text-xs bg-primary-100 text-primary-700 px-2 py-1 rounded-full mt-1 inline-block">
-                            {template.type === 'sms' ? 'SMS' : 'Email'}
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full mt-1 inline-block">
+                            Email Template
                           </span>
                         </div>
                         <div className="flex space-x-1">
@@ -762,7 +696,7 @@ const Notifications = () => {
                                 name: template.name,
                                 subject: template.subject || '',
                                 message: template.message,
-                                type: template.type || 'sms'
+                                type: 'email'
                               });
                               setIsTemplateModalOpen(true);
                             }}
@@ -795,11 +729,11 @@ const Notifications = () => {
                 <div className="text-center py-12 text-gray-500">
                   <MessageSquare className="w-12 h-12 mx-auto text-gray-300 mb-3" />
                   <p className="font-medium">No templates yet</p>
-                  <p className="text-sm mt-1">Create your first message template</p>
+                  <p className="text-sm mt-1">Create your first email template</p>
                   <button
                     onClick={() => {
                       setEditingTemplate(null);
-                      setTemplateForm({ name: '', subject: '', message: '', type: 'sms' });
+                      setTemplateForm({ name: '', subject: '', message: '', type: 'email' });
                       setIsTemplateModalOpen(true);
                     }}
                     className="mt-4 px-4 py-2 bg-gradient-to-r from-secondary-500 to-secondary-600 text-white rounded-lg hover:shadow-lg transition-all inline-flex items-center"
@@ -815,7 +749,7 @@ const Notifications = () => {
           {/* History Tab */}
           {activeTab === 'history' && (
             <div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Notification History</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Email History</h3>
               
               {notifications.length > 0 ? (
                 <div className="space-y-4">
@@ -830,24 +764,20 @@ const Notifications = () => {
                       >
                         <div className="flex items-start justify-between">
                           <div className="flex items-start space-x-3">
-                            <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
-                              {notification.type === 'sms' ? (
-                                <Smartphone className="w-5 h-5 text-primary-600" />
-                              ) : (
-                                <Mail className="w-5 h-5 text-primary-600" />
-                              )}
+                            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                              <Mail className="w-5 h-5 text-blue-600" />
                             </div>
                             <div>
                               <div className="flex items-center space-x-2">
                                 <p className="font-medium text-gray-900">
-                                  {notification.subject || 'SMS Message'}
+                                  {notification.subject || 'Email Message'}
                                 </p>
                                 <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${StatusBadge.color}`}>
                                   <StatusIcon className="w-3 h-3 inline mr-1" />
                                   {StatusBadge.label}
                                 </span>
                               </div>
-                              <p className="text-sm text-gray-600 mt-1">{notification.message}</p>
+                              <p className="text-sm text-gray-600 mt-1 line-clamp-2">{notification.message}</p>
                               <div className="flex items-center space-x-4 mt-2 text-xs text-gray-500">
                                 <span className="flex items-center">
                                   <Users className="w-3 h-3 mr-1" />
@@ -877,8 +807,8 @@ const Notifications = () => {
               ) : (
                 <div className="text-center py-12 text-gray-500">
                   <Bell className="w-12 h-12 mx-auto text-gray-300 mb-3" />
-                  <p className="font-medium">No notifications sent yet</p>
-                  <p className="text-sm mt-1">Your sent messages will appear here</p>
+                  <p className="font-medium">No emails sent yet</p>
+                  <p className="text-sm mt-1">Your sent emails will appear here</p>
                 </div>
               )}
             </div>
@@ -899,7 +829,7 @@ const Notifications = () => {
             >
               <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
                 <h3 className="text-xl font-bold text-primary-800">
-                  {editingTemplate ? 'Edit Template' : 'Create New Template'}
+                  {editingTemplate ? 'Edit Email Template' : 'Create New Email Template'}
                 </h3>
                 <button
                   onClick={() => setIsTemplateModalOpen(false)}
@@ -925,32 +855,16 @@ const Notifications = () => {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Template Type
+                    Subject <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    value={templateForm.type}
-                    onChange={(e) => setTemplateForm({ ...templateForm, type: e.target.value })}
+                  <input
+                    type="text"
+                    value={templateForm.subject}
+                    onChange={(e) => setTemplateForm({ ...templateForm, subject: e.target.value })}
+                    placeholder="Email subject line"
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-secondary-400 focus:border-transparent"
-                  >
-                    <option value="sms">SMS</option>
-                    <option value="email">Email</option>
-                  </select>
+                  />
                 </div>
-
-                {templateForm.type === 'email' && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Subject
-                    </label>
-                    <input
-                      type="text"
-                      value={templateForm.subject}
-                      onChange={(e) => setTemplateForm({ ...templateForm, subject: e.target.value })}
-                      placeholder="Email subject line"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-secondary-400 focus:border-transparent"
-                    />
-                  </div>
-                )}
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -959,8 +873,8 @@ const Notifications = () => {
                   <textarea
                     value={templateForm.message}
                     onChange={(e) => setTemplateForm({ ...templateForm, message: e.target.value })}
-                    rows="6"
-                    placeholder="Write your template message here..."
+                    rows="8"
+                    placeholder="Write your email template here..."
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-secondary-400 focus:border-transparent"
                   />
                   <p className="text-xs text-gray-500 mt-2">

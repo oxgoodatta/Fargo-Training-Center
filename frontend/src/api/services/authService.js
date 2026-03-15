@@ -38,6 +38,11 @@ export const authService = {
     const token = localStorage.getItem('token');
     return !!token;
   },
+
+  // Add to authService.js
+  forgotPassword: (data) => apiClient.post('/auth/forgot-password', data),
+  resetPassword: (data) => apiClient.post('/auth/reset-password', data),
+  verifyResetToken: (token) => apiClient.get(`/auth/verify-reset-token/${token}`),
   
   // Check if user is admin
   isAdmin: () => localStorage.getItem('role') === 'admin',
@@ -47,6 +52,9 @@ export const authService = {
     const role = localStorage.getItem('role');
     return role === 'registrar' || role === 'field_agent';
   },
+
+   changePassword: (data) =>
+    apiClient.put('/auth/change-password', data),
   
   // Check if user is student
   isStudent: () => localStorage.getItem('role') === 'student',
@@ -59,3 +67,5 @@ export const authService = {
     localStorage.removeItem('user_type');
   },
 };
+
+

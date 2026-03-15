@@ -29,15 +29,17 @@ const Payments = () => {
   
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState(null);
-  const [selectedRegistrations, setSelectedRegistrations] = useState([]);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [paymentLocation, setPaymentLocation] = useState('office');
   const [momoPhone, setMomoPhone] = useState('');
+  const [momoProvider, setMomoProvider] = useState('mtn');
+  const [transactionId, setTransactionId] = useState('');
+  const [confirmTransactionId, setConfirmTransactionId] = useState('');
+  const [transactionIdError, setTransactionIdError] = useState('');
   const [processing, setProcessing] = useState(false);
   const [showStudentDropdown, setShowStudentDropdown] = useState(false);
-  const [paymentStep, setPaymentStep] = useState('select'); // 'select', 'allocate'
-  const [allocationMode, setAllocationMode] = useState('single'); // 'single' or 'split'
+  const [paymentAllocation, setPaymentAllocation] = useState([]);
   
   const user = authService.getCurrentUser();
 
@@ -58,6 +60,28 @@ const Payments = () => {
     }
   }, [studentSearchTerm, studentsWithDebt]);
 
+  // Validate transaction IDs match
+  useEffect(() => {
+    if (paymentMethod === 'momo' && transactionId && confirmTransactionId) {
+      if (transactionId !== confirmTransactionId) {
+        setTransactionIdError('Transaction IDs do not match');
+      } else {
+        setTransactionIdError('');
+      }
+    } else {
+      setTransactionIdError('');
+    }
+  }, [transactionId, confirmTransactionId, paymentMethod]);
+
+  // Calculate payment allocation whenever amount or selected student changes
+  useEffect(() => {
+    if (selectedStudent && paymentAmount && parseFloat(paymentAmount) > 0) {
+      calculateAllocation();
+    } else {
+      setPaymentAllocation([]);
+    }
+  }, [paymentAmount, selectedStudent]);
+
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -73,25 +97,26 @@ const Payments = () => {
   };
 
   const fetchPayments = async () => {
-  try {
-    const response = await paymentService.getPayments({
-      per_page: 100
-    });
-    
-    // Get payments from response
-    const paymentsData = response.data.payments || [];
-    
-    // Reverse the array to show newest last (which becomes first when displayed)
-    // Since the table shows from top to bottom, reversing will put newest at top
-    const reversedPayments = [...paymentsData].reverse();
-    
-    setPayments(reversedPayments);
-    console.log('Total payments:', paymentsData.length);
-  } catch (error) {
-    console.error('Error fetching payments:', error);
-    toast.error('Failed to load payments');
-  }
-};
+    try {
+      const response = await paymentService.getPayments({
+        per_page: 100
+      });
+      
+      // Get payments from response
+      const paymentsData = response.data.payments || [];
+      
+      // Sort by date (newest first)
+      const sortedPayments = [...paymentsData].sort((a, b) => {
+        return new Date(b.payment_date) - new Date(a.payment_date);
+      });
+      
+      setPayments(sortedPayments);
+      console.log('Total payments:', paymentsData.length);
+    } catch (error) {
+      console.error('Error fetching payments:', error);
+      toast.error('Failed to load payments');
+    }
+  };
 
   const fetchStudentsWithOutstanding = async () => {
     try {
@@ -137,9 +162,17 @@ const Payments = () => {
             id: reg.id,
             course_name: reg.course_name,
             outstanding_balance: parseFloat(reg.outstanding_balance || 0),
-            total_fee: parseFloat(reg.total_fee || 0)
+            total_fee: parseFloat(reg.total_fee || 0),
+            registration_date: reg.registration_date
           });
         }
+      });
+      
+      // Sort registrations by date (oldest first) for each student
+      studentsMap.forEach(student => {
+        student.registrations.sort((a, b) => 
+          new Date(a.registration_date) - new Date(b.registration_date)
+        );
       });
       
       const studentsArray = Array.from(studentsMap.values());
@@ -150,91 +183,110 @@ const Payments = () => {
     }
   };
 
+  // Calculate how the payment will be allocated across multiple courses
+  const calculateAllocation = () => {
+    if (!selectedStudent) return;
+    
+    const amount = parseFloat(paymentAmount);
+    let remainingAmount = amount;
+    const allocation = [];
+    
+    // Sort registrations by date (oldest first) to pay oldest debts first
+    const sortedRegs = [...selectedStudent.registrations].sort((a, b) => 
+      new Date(a.registration_date) - new Date(b.registration_date)
+    );
+    
+    for (const reg of sortedRegs) {
+      if (remainingAmount <= 0) break;
+      
+      const amountToPay = Math.min(remainingAmount, reg.outstanding_balance);
+      allocation.push({
+        registration_id: reg.id,
+        course_name: reg.course_name,
+        outstanding: reg.outstanding_balance,
+        amount_to_pay: amountToPay,
+        remaining_after: reg.outstanding_balance - amountToPay
+      });
+      
+      remainingAmount -= amountToPay;
+    }
+    
+    setPaymentAllocation(allocation);
+  };
+
   const handleSelectStudent = (student) => {
     setSelectedStudent(student);
-    setSelectedRegistrations([]);
-    setPaymentStep('select');
-    setAllocationMode('single');
+    setPaymentAmount('');
+    setMomoPhone('');
+    setMomoProvider('mtn');
+    setTransactionId('');
+    setConfirmTransactionId('');
+    setTransactionIdError('');
+    setPaymentMethod('cash');
+    setPaymentLocation('office');
+    setPaymentAllocation([]);
     setShowStudentDropdown(false);
     setStudentSearchTerm('');
-  };
-
-  const handleContinueToPayment = () => {
-    if (selectedRegistrations.length === 0) {
-      toast.error('Please select at least one course to pay for');
-      return;
-    }
-    
-    // Calculate total selected amount
-    const totalSelected = selectedRegistrations.reduce((sum, reg) => sum + reg.amount, 0);
-    setPaymentAmount(totalSelected.toString());
-    setPaymentStep('payment');
-  };
-
-  const handleToggleRegistration = (registration, amount) => {
-    const exists = selectedRegistrations.find(r => r.id === registration.id);
-    
-    if (exists) {
-      // Remove
-      setSelectedRegistrations(selectedRegistrations.filter(r => r.id !== registration.id));
-    } else {
-      // Add
-      setSelectedRegistrations([...selectedRegistrations, {
-        id: registration.id,
-        course_name: registration.course_name,
-        outstanding_balance: registration.outstanding_balance,
-        amount: amount || registration.outstanding_balance
-      }]);
-    }
-  };
-
-  const handleUpdateRegistrationAmount = (registrationId, newAmount) => {
-    setSelectedRegistrations(selectedRegistrations.map(reg => 
-      reg.id === registrationId 
-        ? { ...reg, amount: parseFloat(newAmount) || 0 }
-        : reg
-    ));
+    setShowPaymentModal(true);
   };
 
   const handleRecordPayment = async () => {
-    if (!selectedStudent || selectedRegistrations.length === 0) {
-      toast.error('Please select at least one course');
-      return;
-    }
+    if (!selectedStudent) return;
     
-    const totalAmount = selectedRegistrations.reduce((sum, reg) => sum + reg.amount, 0);
-    
-    if (totalAmount <= 0) {
+    const amount = parseFloat(paymentAmount);
+    if (isNaN(amount) || amount <= 0) {
       toast.error('Please enter a valid amount');
       return;
     }
 
-    if (paymentMethod === 'momo' && (!momoPhone || momoPhone.length < 10)) {
-      toast.error('Please enter a valid phone number for MoMo payment');
+    if (amount > selectedStudent.outstanding_total) {
+      toast.error('Amount cannot exceed total outstanding balance');
       return;
+    }
+
+    if (paymentMethod === 'momo') {
+      if (!momoPhone || momoPhone.length < 10) {
+        toast.error('Please enter a valid phone number for MoMo payment');
+        return;
+      }
+      if (!transactionId || !confirmTransactionId) {
+        toast.error('Please enter both transaction ID and confirmation');
+        return;
+      }
+      if (transactionId !== confirmTransactionId) {
+        toast.error('Transaction IDs do not match');
+        return;
+      }
     }
 
     setProcessing(true);
     
     try {
-      // Process payments for each selected registration
-      for (const reg of selectedRegistrations) {
-        if (reg.amount <= 0) continue;
+      // Create payments for each registration based on allocation
+      const paymentPromises = paymentAllocation.map(async (allocation) => {
+        if (allocation.amount_to_pay <= 0) return null;
         
         const paymentData = {
-          registration_id: reg.id,
+          registration_id: allocation.registration_id,
           student_id: selectedStudent.id,
-          amount: reg.amount,
+          amount: allocation.amount_to_pay,
           payment_method: paymentMethod,
           payment_location: paymentLocation,
           collected_by_staff_id: user?.id,
-          momo_phone_number: momoPhone || null
+          momo_phone_number: momoPhone || null,
+          momo_provider: paymentMethod === 'momo' ? momoProvider : null,
+          transaction_id: paymentMethod === 'momo' ? transactionId : null,
+          confirm_transaction_id: paymentMethod === 'momo' ? confirmTransactionId : null,
+          payment_type: 'tuition',
+          status: 'completed'
         };
 
-        await paymentService.createPayment(paymentData);
-      }
+        return paymentService.createPayment(paymentData);
+      }).filter(p => p !== null);
       
-      toast.success(`Payment of ${formatCurrency(totalAmount)} recorded successfully`);
+      await Promise.all(paymentPromises);
+      
+      toast.success(`Payment of ${formatCurrency(amount)} recorded successfully across ${paymentAllocation.length} course(s)`);
       setShowPaymentModal(false);
       resetPaymentForm();
       fetchData();
@@ -248,14 +300,16 @@ const Payments = () => {
 
   const resetPaymentForm = () => {
     setSelectedStudent(null);
-    setSelectedRegistrations([]);
     setPaymentAmount('');
     setPaymentMethod('cash');
     setPaymentLocation('office');
     setMomoPhone('');
+    setMomoProvider('mtn');
+    setTransactionId('');
+    setConfirmTransactionId('');
+    setTransactionIdError('');
     setStudentSearchTerm('');
-    setPaymentStep('select');
-    setAllocationMode('single');
+    setPaymentAllocation([]);
     setFilteredStudents(studentsWithDebt);
   };
 
@@ -294,7 +348,8 @@ const Payments = () => {
     const matchesSearch = 
       p.student_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       p.payment_reference?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.registration_number?.toLowerCase().includes(searchTerm.toLowerCase());
+      p.registration_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      p.transaction_id?.toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesMethod = selectedMethod === 'all' || p.payment_method === selectedMethod;
 
@@ -346,7 +401,7 @@ const Payments = () => {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
             <input
               type="text"
-              placeholder="Search payments by student or reference..."
+              placeholder="Search payments by student, reference, or transaction ID..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg"
@@ -402,10 +457,10 @@ const Payments = () => {
                     <th className="px-6 py-4 text-left text-sm font-semibold">Student</th>
                     <th className="px-6 py-4 text-left text-sm font-semibold">Date</th>
                     <th className="px-6 py-4 text-left text-sm font-semibold">Method</th>
+                    <th className="px-6 py-4 text-left text-sm font-semibold">Transaction Details</th>
                     <th className="px-6 py-4 text-left text-sm font-semibold">Location</th>
                     <th className="px-6 py-4 text-left text-sm font-semibold">Amount</th>
                     <th className="px-6 py-4 text-left text-sm font-semibold">Status</th>
-                    <th className="px-6 py-4 text-right text-sm font-semibold">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
@@ -426,10 +481,33 @@ const Payments = () => {
                             {new Date(payment.payment_date).toLocaleDateString()}
                           </td>
                           <td className="px-6 py-4">
-                            <span className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded-full ${MethodBadge.color}`}>
-                              <MethodBadge.icon className="w-3 h-3 mr-1" />
-                              {MethodBadge.label}
-                            </span>
+                            <div className="flex flex-col">
+                              <span className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded-full ${MethodBadge.color} mb-1`}>
+                                <MethodBadge.icon className="w-3 h-3 mr-1" />
+                                {MethodBadge.label}
+                              </span>
+                              {payment.payment_method === 'momo' && payment.momo_provider && (
+                                <span className="text-xs text-gray-500 mt-1">
+                                  {payment.momo_provider === 'mtn' ? 'MTN' : 'Telecel Cash'}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            {payment.transaction_id ? (
+                              <div className="flex flex-col">
+                                <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded">
+                                  ID: {payment.transaction_id}
+                                </span>
+                                {payment.momo_phone_number && (
+                                  <span className="text-xs text-gray-500 mt-1">
+                                    📱 {payment.momo_phone_number}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-gray-400 text-xs">—</span>
+                            )}
                           </td>
                           <td className="px-6 py-4 text-sm capitalize">{payment.payment_location}</td>
                           <td className="px-6 py-4 font-medium">{formatCurrency(payment.amount)}</td>
@@ -438,11 +516,6 @@ const Payments = () => {
                               <StatusBadge.icon className="w-3 h-3 mr-1" />
                               {StatusBadge.label}
                             </span>
-                          </td>
-                          <td className="px-6 py-4 text-right">
-                            <button className="p-2 hover:bg-gray-100 rounded-lg">
-                              <Receipt className="w-4 h-4 text-gray-600" />
-                            </button>
                           </td>
                         </tr>
                       );
@@ -462,7 +535,7 @@ const Payments = () => {
         )}
       </motion.div>
 
-      {/* Payment Modal */}
+      {/* Simplified Payment Modal - No course selection */}
       {showPaymentModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="flex min-h-screen items-center justify-center p-4">
@@ -499,7 +572,7 @@ const Payments = () => {
                         onChange={(e) => setStudentSearchTerm(e.target.value)}
                         onFocus={() => setShowStudentDropdown(true)}
                         placeholder="Search by name, ID, or phone..."
-                        className="w-full pl-10 pr-4 py-2 border rounded-lg"
+                        className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
                       />
                     </div>
                     
@@ -523,6 +596,9 @@ const Payments = () => {
                                   {student.phone}
                                 </div>
                               )}
+                              <div className="text-xs text-gray-400 mt-1">
+                                {student.registrations.length} course(s) with outstanding balance
+                              </div>
                             </div>
                           ))
                         ) : (
@@ -535,14 +611,16 @@ const Payments = () => {
                   </div>
                 )}
 
-                {/* Student Selected - Show Courses */}
-                {selectedStudent && paymentStep === 'select' && (
+                {/* Payment Form - Shown after student is selected */}
+                {selectedStudent && (
                   <>
+                    {/* Student Summary */}
                     <div className="bg-primary-50 p-4 rounded-lg">
                       <div className="flex justify-between items-center">
                         <div>
                           <p className="font-medium">{selectedStudent.student_name}</p>
                           <p className="text-sm text-gray-600">ID: {selectedStudent.student_id}</p>
+                          <p className="text-sm text-gray-600 mt-1">{selectedStudent.phone}</p>
                         </div>
                         <button
                           onClick={() => setSelectedStudent(null)}
@@ -551,127 +629,108 @@ const Payments = () => {
                           Change
                         </button>
                       </div>
+                      <div className="mt-3 pt-3 border-t border-primary-200">
+                        <p className="text-sm font-semibold text-red-600">
+                          Total Outstanding: {formatCurrency(selectedStudent.outstanding_total)}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {selectedStudent.registrations.length} course(s) with outstanding balance
+                        </p>
+                      </div>
                     </div>
 
+                    {/* Amount - With scroll prevention */}
                     <div>
-                      <h4 className="font-medium mb-3">Select Courses to Pay For:</h4>
-                      <div className="space-y-3 max-h-60 overflow-y-auto">
-                        {selectedStudent.registrations.map((reg, idx) => (
-                          <div key={idx} className="border border-gray-200 rounded-lg p-3">
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center">
-                                  <input
-                                    type="checkbox"
-                                    id={`reg-${reg.id}`}
-                                    checked={selectedRegistrations.some(r => r.id === reg.id)}
-                                    onChange={(e) => {
-                                      if (e.target.checked) {
-                                        handleToggleRegistration(reg, reg.outstanding_balance);
-                                      } else {
-                                        handleToggleRegistration(reg, 0);
-                                      }
-                                    }}
-                                    className="mr-3 mt-1"
-                                  />
-                                  <div>
-                                    <label htmlFor={`reg-${reg.id}`} className="font-medium cursor-pointer">
-                                      {reg.course_name}
-                                    </label>
-                                    <p className="text-sm text-gray-600">
-                                      Outstanding: {formatCurrency(reg.outstanding_balance)}
-                                    </p>
-                                  </div>
-                                </div>
+                      <label className="block text-sm font-medium mb-2">
+                        Payment Amount (Max: {formatCurrency(selectedStudent.outstanding_total)})
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">₵</span>
+                        <input
+                          type="number"
+                          value={paymentAmount}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === '' || !isNaN(parseFloat(value))) {
+                              // Round to 2 decimal places when setting
+                              if (value !== '') {
+                                const rounded = Math.round(parseFloat(value) * 100) / 100;
+                                setPaymentAmount(rounded.toString());
+                              } else {
+                                setPaymentAmount(value);
+                              }
+                            }
+                          }}
+                          onWheel={(e) => e.target.blur()}
+                          max={selectedStudent.outstanding_total}
+                          step="0.01"
+                          className="w-full pl-8 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
+                          placeholder="Enter amount"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Payment Allocation Summary */}
+                    {paymentAllocation.length > 0 && (
+                      <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                        <p className="text-sm font-medium text-blue-800 mb-2 flex items-center">
+                          <CheckCircle className="w-4 h-4 mr-1" />
+                          Payment Allocation
+                        </p>
+                        <div className="space-y-2 text-sm">
+                          {paymentAllocation.map((item, idx) => (
+                            <div key={idx} className="flex justify-between items-center text-xs">
+                              <span className="text-blue-700">{item.course_name}</span>
+                              <div className="text-right">
+                                <span className="text-blue-600 font-medium">
+                                  {formatCurrency(item.amount_to_pay)}
+                                </span>
+                                {item.remaining_after > 0 ? (
+                                  <span className="text-gray-500 ml-2">
+                                    (remains {formatCurrency(item.remaining_after)})
+                                  </span>
+                                ) : (
+                                  <span className="text-green-600 ml-2">
+                                    ✓ Paid in full
+                                  </span>
+                                )}
                               </div>
                             </div>
-                            
-                            {selectedRegistrations.some(r => r.id === reg.id) && (
-                              <div className="mt-2 pl-7">
-                                <label className="block text-xs text-gray-500 mb-1">Amount to pay:</label>
-                                <div className="relative w-40">
-                                  <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 text-sm">₵</span>
-                                  <input
-                                    type="number"
-                                    value={selectedRegistrations.find(r => r.id === reg.id)?.amount || reg.outstanding_balance}
-                                    onChange={(e) => handleUpdateRegistrationAmount(reg.id, e.target.value)}
-                                    max={reg.outstanding_balance}
-                                    step="0.01"
-                                    className="w-full pl-8 pr-3 py-1 text-sm border rounded-lg"
-                                  />
-                                </div>
-                              </div>
-                            )}
+                          ))}
+                          <div className="border-t border-blue-200 pt-2 mt-1">
+                            <div className="flex justify-between font-medium">
+                              <span>Total Paid:</span>
+                              <span className="text-green-600">{formatCurrency(parseFloat(paymentAmount) || 0)}</span>
+                            </div>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="bg-gray-50 p-3 rounded-lg">
-                      <div className="flex justify-between font-medium">
-                        <span>Total Selected:</span>
-                        <span className="text-secondary-600">
-                          {formatCurrency(selectedRegistrations.reduce((sum, r) => sum + r.amount, 0))}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex space-x-3 pt-4">
-                      <button
-                        onClick={() => setSelectedStudent(null)}
-                        className="flex-1 py-2 border rounded-lg hover:bg-gray-50"
-                      >
-                        Back
-                      </button>
-                      <button
-                        onClick={handleContinueToPayment}
-                        disabled={selectedRegistrations.length === 0}
-                        className="flex-1 py-2 bg-secondary-500 text-white rounded-lg hover:bg-secondary-600 disabled:opacity-50"
-                      >
-                        Continue to Payment
-                      </button>
-                    </div>
-                  </>
-                )}
-
-                {/* Payment Details */}
-                {selectedStudent && paymentStep === 'payment' && (
-                  <>
-                    <div className="bg-primary-50 p-4 rounded-lg">
-                      <p className="font-medium">{selectedStudent.student_name}</p>
-                      <div className="mt-2 space-y-1">
-                        {selectedRegistrations.map((reg, idx) => (
-                          <div key={idx} className="flex justify-between text-sm">
-                            <span>{reg.course_name}</span>
-                            <span className="font-medium">{formatCurrency(reg.amount)}</span>
-                          </div>
-                        ))}
-                        <div className="border-t border-primary-200 mt-2 pt-2 flex justify-between font-bold">
-                          <span>Total</span>
-                          <span className="text-secondary-600">
-                            {formatCurrency(selectedRegistrations.reduce((sum, r) => sum + r.amount, 0))}
-                          </span>
                         </div>
                       </div>
-                    </div>
+                    )}
 
                     {/* Payment Method */}
                     <div>
                       <label className="block text-sm font-medium mb-2">Payment Method</label>
                       <div className="grid grid-cols-2 gap-3">
                         <button
-                          onClick={() => setPaymentMethod('cash')}
+                          onClick={() => {
+                            setPaymentMethod('cash');
+                            setTransactionId('');
+                            setConfirmTransactionId('');
+                            setTransactionIdError('');
+                          }}
                           className={`p-3 border rounded-lg flex items-center justify-center space-x-2 ${
-                            paymentMethod === 'cash' ? 'border-green-500 bg-green-50' : ''
+                            paymentMethod === 'cash' ? 'border-green-500 bg-green-50' : 'border-gray-300'
                           }`}
                         >
                           <Landmark className="w-5 h-5" />
                           <span>Cash</span>
                         </button>
                         <button
-                          onClick={() => setPaymentMethod('momo')}
+                          onClick={() => {
+                            setPaymentMethod('momo');
+                          }}
                           className={`p-3 border rounded-lg flex items-center justify-center space-x-2 ${
-                            paymentMethod === 'momo' ? 'border-blue-500 bg-blue-50' : ''
+                            paymentMethod === 'momo' ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
                           }`}
                         >
                           <Smartphone className="w-5 h-5" />
@@ -680,31 +739,100 @@ const Payments = () => {
                       </div>
                     </div>
 
-                    {/* MoMo Phone */}
+                    {/* MoMo Fields */}
                     {paymentMethod === 'momo' && (
-                      <div>
-                        <label className="block text-sm font-medium mb-2">Phone Number</label>
-                        <div className="relative">
-                          <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                      <>
+                        <div>
+                          <label className="block text-sm font-medium mb-2">MoMo Provider</label>
+                          <div className="grid grid-cols-2 gap-3">
+                            <button
+                              type="button"
+                              onClick={() => setMomoProvider('mtn')}
+                              className={`p-2 border rounded-lg ${
+                                momoProvider === 'mtn' ? 'bg-yellow-50 border-yellow-500' : 'border-gray-300'
+                              }`}
+                            >
+                              <span className="font-medium">MTN</span> MoMo
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setMomoProvider('vodafone')}
+                              className={`p-2 border rounded-lg ${
+                                momoProvider === 'vodafone' ? 'bg-red-50 border-red-500' : 'border-gray-300'
+                              }`}
+                            >
+                              <span className="font-medium">Telecel</span> Cash
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium mb-2">Phone Number</label>
+                          <div className="relative">
+                            <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                            <input
+                              type="tel"
+                              value={momoPhone}
+                              onChange={(e) => setMomoPhone(e.target.value.replace(/\D/g, ''))}
+                              className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
+                              placeholder="024XXXXXXX"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Transaction ID fields */}
+                        <div>
+                          <label className="block text-sm font-medium mb-2">Transaction ID *</label>
                           <input
-                            type="tel"
-                            value={momoPhone}
-                            onChange={(e) => setMomoPhone(e.target.value.replace(/\D/g, ''))}
-                            className="w-full pl-10 pr-4 py-2 border rounded-lg"
-                            placeholder="024XXXXXXX"
+                            type="text"
+                            value={transactionId}
+                            onChange={(e) => setTransactionId(e.target.value)}
+                            className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
+                            placeholder="Enter mobile money transaction ID"
                           />
                         </div>
-                      </div>
+
+                        <div>
+                          <label className="block text-sm font-medium mb-2">Confirm Transaction ID *</label>
+                          <input
+                            type="text"
+                            value={confirmTransactionId}
+                            onChange={(e) => setConfirmTransactionId(e.target.value)}
+                            className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400 ${
+                              transactionIdError ? 'border-red-500' : 'border-gray-300'
+                            }`}
+                            placeholder="Re-enter transaction ID to confirm"
+                          />
+                          {transactionIdError && (
+                            <p className="text-xs text-red-600 mt-1">{transactionIdError}</p>
+                          )}
+                        </div>
+
+                        {/* Transaction Summary */}
+                        {transactionId && confirmTransactionId && !transactionIdError && (
+                          <div className="bg-green-50 p-3 rounded-lg border border-green-200">
+                            <div className="flex items-center text-green-700 text-sm mb-1">
+                              <CheckCircle className="w-4 h-4 mr-1" />
+                              Transaction verified
+                            </div>
+                            <div className="text-xs text-gray-600">
+                              <span className="font-medium">Provider:</span> {momoProvider === 'mtn' ? 'MTN MoMo' : 'Telecel Cash'}<br/>
+                              <span className="font-medium">Transaction ID:</span> {transactionId}<br/>
+                              <span className="font-medium">Phone:</span> {momoPhone}
+                            </div>
+                          </div>
+                        )}
+                      </>
                     )}
 
-                    {/* Location */}
+                    {/* Payment Location */}
                     <div>
                       <label className="block text-sm font-medium mb-2">Payment Location</label>
                       <div className="grid grid-cols-2 gap-3">
                         <button
                           onClick={() => setPaymentLocation('office')}
                           className={`p-3 border rounded-lg ${
-                            paymentLocation === 'office' ? 'bg-purple-50 border-purple-500' : ''
+                            paymentLocation === 'office' ? 'bg-purple-50 border-purple-500' : 'border-gray-300'
                           }`}
                         >
                           Office
@@ -712,7 +840,7 @@ const Payments = () => {
                         <button
                           onClick={() => setPaymentLocation('field')}
                           className={`p-3 border rounded-lg ${
-                            paymentLocation === 'field' ? 'bg-orange-50 border-orange-500' : ''
+                            paymentLocation === 'field' ? 'bg-orange-50 border-orange-500' : 'border-gray-300'
                           }`}
                         >
                           Field
@@ -723,14 +851,14 @@ const Payments = () => {
                     {/* Actions */}
                     <div className="flex space-x-3 pt-4">
                       <button
-                        onClick={() => setPaymentStep('select')}
+                        onClick={() => setSelectedStudent(null)}
                         className="flex-1 py-2 border rounded-lg hover:bg-gray-50"
                       >
                         Back
                       </button>
                       <button
                         onClick={handleRecordPayment}
-                        disabled={processing}
+                        disabled={processing || !paymentAmount || parseFloat(paymentAmount) <= 0}
                         className="flex-1 py-2 bg-secondary-500 text-white rounded-lg hover:bg-secondary-600 disabled:opacity-50"
                       >
                         {processing ? 'Processing...' : 'Record Payment'}

@@ -7,6 +7,8 @@ import { Toaster } from 'react-hot-toast';
 // Auth Pages
 import Login from './pages/auth/Login';
 import StudentRegister from './pages/auth/StudentRegister';
+import ForgotPassword from './pages/auth/ForgotPassword';  // ADD THIS
+import ResetPassword from './pages/auth/ResetPassword';    // ADD THIS
 
 // Layouts
 import AdminLayout from './components/Layout/AdminLayout';
@@ -87,6 +89,8 @@ function App() {
           {/* Public Routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/register/student" element={<StudentRegister />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />  {/* ADD THIS */}
+          <Route path="/reset-password" element={<ResetPassword />} />    {/* ADD THIS */}
           
           {/* ============ PUBLIC REGISTRATION FLOW ============ */}
           <Route path="/student/registration-fees" element={<RegistrationFees />} />

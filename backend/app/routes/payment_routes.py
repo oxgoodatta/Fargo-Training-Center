@@ -61,7 +61,7 @@ def create_payment():
         # Handle collected_by_staff_id (can be None for online payments)
         collected_by_staff_id = data.get('collected_by_staff_id')
         
-        # Create payment record
+        # Create payment record - UPDATED to use transaction_id and confirm_transaction_id
         payment = FeePayment(
             payment_reference=payment_reference,
             registration_id=registration.id,
@@ -69,9 +69,11 @@ def create_payment():
             amount=amount,
             payment_type=payment_type,
             payment_method=data['payment_method'],
-            momo_transaction_id=data.get('momo_transaction_id'),
+            momo_transaction_id=data.get('momo_transaction_id'),  # Keep for backward compatibility
             momo_phone_number=data.get('momo_phone_number'),
             momo_provider=data.get('momo_provider'),
+            transaction_id=data.get('transaction_id'),  # NEW: Store transaction ID
+            confirm_transaction_id=data.get('confirm_transaction_id'),  # NEW: Store confirmation
             payment_location=data['payment_location'],
             collected_by_staff_id=collected_by_staff_id,
             status='completed',
@@ -138,8 +140,8 @@ def get_payments():
             except:
                 pass
         
-        # REMOVED ORDER BY - Let it come as is from the database
-        # query = query.order_by(FeePayment.payment_date.desc())
+        # Order by latest first
+        query = query.order_by(FeePayment.created_at.desc())
         
         pagination = query.paginate(page=page, per_page=per_page, error_out=False)
         
@@ -216,7 +218,7 @@ def export_payments():
         
         si = StringIO()
         cw = csv.writer(si)
-        cw.writerow(['Reference', 'Student', 'Registration', 'Amount', 'Method', 'Location', 'Date', 'Status'])
+        cw.writerow(['Reference', 'Student', 'Registration', 'Amount', 'Method', 'Location', 'Date', 'Status', 'Transaction ID'])
         
         for p in payments:
             student = p.student
@@ -229,7 +231,8 @@ def export_payments():
                 p.payment_method,
                 p.payment_location,
                 p.payment_date.strftime('%Y-%m-%d'),
-                p.status
+                p.status,
+                p.transaction_id or p.momo_transaction_id or 'N/A'  # Show transaction ID
             ])
         
         output = make_response(si.getvalue())

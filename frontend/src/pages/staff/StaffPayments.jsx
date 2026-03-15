@@ -4,7 +4,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   CreditCard, Search, Phone, User, ArrowLeft, 
   CheckCircle, XCircle, Smartphone, Landmark,
-  DollarSign, Calendar, Filter, X
+  DollarSign, Calendar, Filter, X, BookOpen
 } from 'lucide-react';
 import { paymentService } from '../../api/services/paymentService';
 import { registrationService } from '../../api/services/registrationService';
@@ -27,8 +27,12 @@ const StaffPayments = () => {
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [paymentLocation, setPaymentLocation] = useState('office');
   const [momoPhone, setMomoPhone] = useState('');
+  const [momoProvider, setMomoProvider] = useState('mtn');
+  const [transactionId, setTransactionId] = useState('');
+  const [confirmTransactionId, setConfirmTransactionId] = useState('');
+  const [transactionIdError, setTransactionIdError] = useState('');
   const [processing, setProcessing] = useState(false);
-  const [selectedRegistration, setSelectedRegistration] = useState(null);
+  const [paymentAllocation, setPaymentAllocation] = useState([]);
   
   const staff = authService.getCurrentUser();
 
@@ -38,6 +42,28 @@ const StaffPayments = () => {
     }
     fetchStudentsWithOutstanding();
   }, [location.state]);
+
+  // Validate transaction IDs match
+  useEffect(() => {
+    if (paymentMethod === 'momo' && transactionId && confirmTransactionId) {
+      if (transactionId !== confirmTransactionId) {
+        setTransactionIdError('Transaction IDs do not match');
+      } else {
+        setTransactionIdError('');
+      }
+    } else {
+      setTransactionIdError('');
+    }
+  }, [transactionId, confirmTransactionId, paymentMethod]);
+
+  // Calculate payment allocation whenever amount or selected student changes
+  useEffect(() => {
+    if (selectedStudent && paymentAmount && parseFloat(paymentAmount) > 0) {
+      calculateAllocation();
+    } else {
+      setPaymentAllocation([]);
+    }
+  }, [paymentAmount, selectedStudent]);
 
   const fetchStudentsWithOutstanding = async () => {
     try {
@@ -86,6 +112,13 @@ const StaffPayments = () => {
         }
       });
       
+      // Sort registrations by date (oldest first) for each student
+      studentMap.forEach(student => {
+        student.registrations.sort((a, b) => 
+          new Date(a.registration_date) - new Date(b.registration_date)
+        );
+      });
+      
       setStudents(Array.from(studentMap.values()));
       setFilteredStudents(Array.from(studentMap.values()));
     } catch (error) {
@@ -109,15 +142,53 @@ const StaffPayments = () => {
     }
   }, [searchTerm, students]);
 
+  // Calculate how the payment will be allocated across multiple courses
+  const calculateAllocation = () => {
+    if (!selectedStudent) return;
+    
+    const amount = parseFloat(paymentAmount);
+    let remainingAmount = amount;
+    const allocation = [];
+    
+    // Sort registrations by date (oldest first) to pay oldest debts first
+    const sortedRegs = [...selectedStudent.registrations].sort((a, b) => 
+      new Date(a.registration_date) - new Date(b.registration_date)
+    );
+    
+    for (const reg of sortedRegs) {
+      if (remainingAmount <= 0) break;
+      
+      const amountToPay = Math.min(remainingAmount, reg.outstanding_balance);
+      allocation.push({
+        registration_id: reg.id,
+        course_name: reg.course_name,
+        outstanding: reg.outstanding_balance,
+        amount_to_pay: amountToPay,
+        remaining_after: reg.outstanding_balance - amountToPay
+      });
+      
+      remainingAmount -= amountToPay;
+    }
+    
+    setPaymentAllocation(allocation);
+  };
+
   const handleSelectStudent = (student) => {
     setSelectedStudent(student);
-    setSelectedRegistration(student.registrations[0]);
-    setPaymentAmount(student.total_outstanding.toString());
+    setPaymentAmount(''); // Empty by default - user must type amount
+    setMomoPhone('');
+    setMomoProvider('mtn');
+    setTransactionId('');
+    setConfirmTransactionId('');
+    setTransactionIdError('');
+    setPaymentMethod('cash');
+    setPaymentLocation('office');
+    setPaymentAllocation([]);
     setShowPaymentModal(true);
   };
 
   const handleProcessPayment = async () => {
-    if (!selectedStudent || !selectedRegistration) return;
+    if (!selectedStudent) return;
     
     const amount = parseFloat(paymentAmount);
     if (isNaN(amount) || amount <= 0) {
@@ -126,33 +197,65 @@ const StaffPayments = () => {
     }
 
     if (amount > selectedStudent.total_outstanding) {
-      toast.error('Amount cannot exceed outstanding balance');
+      toast.error('Amount cannot exceed total outstanding balance');
       return;
     }
 
-    if (paymentMethod === 'momo' && (!momoPhone || momoPhone.length < 10)) {
-      toast.error('Please enter a valid phone number');
-      return;
+    if (paymentMethod === 'momo') {
+      if (!momoPhone || momoPhone.length < 10) {
+        toast.error('Please enter a valid phone number');
+        return;
+      }
+      if (!transactionId || !confirmTransactionId) {
+        toast.error('Please enter both transaction ID and confirmation');
+        return;
+      }
+      if (transactionId !== confirmTransactionId) {
+        toast.error('Transaction IDs do not match');
+        return;
+      }
     }
 
     setProcessing(true);
+    
     try {
-      const paymentData = {
-        registration_id: selectedRegistration.id,
-        student_id: selectedStudent.id,
-        amount: amount,
-        payment_method: paymentMethod,
-        payment_location: paymentLocation,
-        collected_by_staff_id: staff?.id,
-        momo_phone_number: momoPhone || null,
-        momo_provider: paymentMethod === 'momo' ? 'mtn' : null
-      };
-
-      await paymentService.createPayment(paymentData);
+      // Create payments for each registration based on allocation
+      const paymentPromises = paymentAllocation.map(async (allocation) => {
+        if (allocation.amount_to_pay <= 0) return null;
+        
+        const paymentData = {
+          registration_id: allocation.registration_id,
+          student_id: selectedStudent.id,
+          amount: allocation.amount_to_pay,
+          payment_method: paymentMethod,
+          payment_location: paymentLocation,
+          collected_by_staff_id: staff?.id,
+          momo_phone_number: momoPhone || null,
+          momo_provider: paymentMethod === 'momo' ? momoProvider : null,
+          transaction_id: paymentMethod === 'momo' ? transactionId : null,
+          confirm_transaction_id: paymentMethod === 'momo' ? confirmTransactionId : null,
+          payment_type: 'tuition',
+          status: 'completed'
+        };
+        
+        return paymentService.createPayment(paymentData);
+      }).filter(p => p !== null);
       
-      toast.success('Payment recorded successfully');
+      await Promise.all(paymentPromises);
+      
+      toast.success(`Payment of ${formatCurrency(amount)} recorded successfully across ${paymentAllocation.length} course(s)`);
       setShowPaymentModal(false);
       fetchStudentsWithOutstanding();
+      
+      // Reset form
+      setPaymentAmount('');
+      setMomoPhone('');
+      setMomoProvider('mtn');
+      setTransactionId('');
+      setConfirmTransactionId('');
+      setPaymentMethod('cash');
+      setPaymentLocation('office');
+      setPaymentAllocation([]);
       
     } catch (error) {
       console.error('Payment error:', error);
@@ -160,6 +263,11 @@ const StaffPayments = () => {
     } finally {
       setProcessing(false);
     }
+  };
+
+  // Helper function to round to 2 decimal places
+  const roundToTwoDecimals = (value) => {
+    return Math.round((value || 0) * 100) / 100;
   };
 
   const formatCurrency = (amount) => {
@@ -232,11 +340,15 @@ const StaffPayments = () => {
                         </div>
                         <div className="flex items-center text-sm font-semibold text-red-600">
                           <DollarSign className="w-4 h-4 mr-2" />
-                          Outstanding: {formatCurrency(student.total_outstanding)}
+                          Total Outstanding: {formatCurrency(student.total_outstanding)}
                         </div>
                       </div>
 
                       <div className="mt-3 space-y-2">
+                        <p className="text-xs font-medium text-gray-500 flex items-center">
+                          <BookOpen className="w-3 h-3 mr-1" />
+                          Courses ({student.registrations.length}):
+                        </p>
                         {student.registrations.map((reg, idx) => (
                           <div key={idx} className="text-sm bg-gray-50 p-2 rounded-lg flex justify-between">
                             <span>{reg.course_name}</span>
@@ -295,66 +407,104 @@ const StaffPayments = () => {
                       <p className="text-sm font-semibold text-red-600">
                         Total Outstanding: {formatCurrency(selectedStudent.total_outstanding)}
                       </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {selectedStudent.registrations.length} course(s) with outstanding balance
+                      </p>
                     </div>
                   </div>
 
-                  {/* Select Registration (if multiple) */}
-                  {selectedStudent.registrations.length > 1 && (
-                    <div>
-                      <label className="block text-sm font-medium mb-2">Select Course</label>
-                      <select
-                        value={selectedRegistration?.id}
-                        onChange={(e) => {
-                          const reg = selectedStudent.registrations.find(r => r.id === parseInt(e.target.value));
-                          setSelectedRegistration(reg);
-                        }}
-                        className="w-full px-4 py-2 border rounded-lg"
-                      >
-                        {selectedStudent.registrations.map(reg => (
-                          <option key={reg.id} value={reg.id}>
-                            {reg.course_name} - Due: {formatCurrency(reg.outstanding_balance)}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-
-                  {/* Amount */}
+                  {/* Amount - FIXED with scroll prevention and no auto-fill */}
                   <div>
                     <label className="block text-sm font-medium mb-2">
-                      Amount (Max: {formatCurrency(selectedRegistration?.outstanding_balance)})
+                      Payment Amount (Max: {formatCurrency(selectedStudent.total_outstanding)})
                     </label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">₵</span>
                       <input
                         type="number"
                         value={paymentAmount}
-                        onChange={(e) => setPaymentAmount(e.target.value)}
-                        max={selectedRegistration?.outstanding_balance}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          if (value === '' || !isNaN(parseFloat(value))) {
+                            // Round to 2 decimal places when setting
+                            if (value !== '') {
+                              const rounded = Math.round(parseFloat(value) * 100) / 100;
+                              setPaymentAmount(rounded.toString());
+                            } else {
+                              setPaymentAmount(value);
+                            }
+                          }
+                        }}
+                        onWheel={(e) => e.target.blur()} // Prevents scroll wheel from changing value
+                        max={selectedStudent.total_outstanding}
                         step="0.01"
-                        className="w-full pl-8 pr-4 py-2 border rounded-lg"
-                        placeholder="0.00"
+                        className="w-full pl-8 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
+                        placeholder="Enter amount"
                       />
                     </div>
                   </div>
+
+                  {/* Payment Allocation Summary */}
+                  {paymentAllocation.length > 0 && (
+                    <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                      <p className="text-sm font-medium text-blue-800 mb-2 flex items-center">
+                        <CheckCircle className="w-4 h-4 mr-1" />
+                        Payment Allocation
+                      </p>
+                      <div className="space-y-2 text-sm">
+                        {paymentAllocation.map((item, idx) => (
+                          <div key={idx} className="flex justify-between items-center text-xs">
+                            <span className="text-blue-700">{item.course_name}</span>
+                            <div className="text-right">
+                              <span className="text-blue-600 font-medium">
+                                {formatCurrency(item.amount_to_pay)}
+                              </span>
+                              {item.remaining_after > 0 ? (
+                                <span className="text-gray-500 ml-2">
+                                  (remains {formatCurrency(item.remaining_after)})
+                                </span>
+                              ) : (
+                                <span className="text-green-600 ml-2">
+                                  ✓ Paid in full
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        <div className="border-t border-blue-200 pt-2 mt-1">
+                          <div className="flex justify-between font-medium">
+                            <span>Total Paid:</span>
+                            <span className="text-green-600">{formatCurrency(parseFloat(paymentAmount) || 0)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Payment Method */}
                   <div>
                     <label className="block text-sm font-medium mb-2">Payment Method</label>
                     <div className="grid grid-cols-2 gap-3">
                       <button
-                        onClick={() => setPaymentMethod('cash')}
+                        onClick={() => {
+                          setPaymentMethod('cash');
+                          setTransactionId('');
+                          setConfirmTransactionId('');
+                          setTransactionIdError('');
+                        }}
                         className={`p-3 border rounded-lg flex items-center justify-center space-x-2 ${
-                          paymentMethod === 'cash' ? 'border-green-500 bg-green-50' : ''
+                          paymentMethod === 'cash' ? 'border-green-500 bg-green-50' : 'border-gray-300'
                         }`}
                       >
                         <Landmark className="w-5 h-5" />
                         <span>Cash</span>
                       </button>
                       <button
-                        onClick={() => setPaymentMethod('momo')}
+                        onClick={() => {
+                          setPaymentMethod('momo');
+                        }}
                         className={`p-3 border rounded-lg flex items-center justify-center space-x-2 ${
-                          paymentMethod === 'momo' ? 'border-blue-500 bg-blue-50' : ''
+                          paymentMethod === 'momo' ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
                         }`}
                       >
                         <Smartphone className="w-5 h-5" />
@@ -363,21 +513,75 @@ const StaffPayments = () => {
                     </div>
                   </div>
 
-                  {/* MoMo Phone */}
+                  {/* MoMo Fields */}
                   {paymentMethod === 'momo' && (
-                    <div>
-                      <label className="block text-sm font-medium mb-2">Phone Number</label>
-                      <div className="relative">
-                        <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium mb-2">MoMo Provider</label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setMomoProvider('mtn')}
+                            className={`p-2 border rounded-lg ${
+                              momoProvider === 'mtn' ? 'bg-yellow-50 border-yellow-500' : 'border-gray-300'
+                            }`}
+                          >
+                            MTN MoMo
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setMomoProvider('vodafone')}
+                            className={`p-2 border rounded-lg ${
+                              momoProvider === 'vodafone' ? 'bg-red-50 border-red-500' : 'border-gray-300'
+                            }`}
+                          >
+                            Telecel Cash
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Phone Number</label>
+                        <div className="relative">
+                          <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                          <input
+                            type="tel"
+                            value={momoPhone}
+                            onChange={(e) => setMomoPhone(e.target.value.replace(/\D/g, ''))}
+                            className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
+                            placeholder="024XXXXXXX"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Transaction ID fields */}
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Transaction ID *</label>
                         <input
-                          type="tel"
-                          value={momoPhone}
-                          onChange={(e) => setMomoPhone(e.target.value.replace(/\D/g, ''))}
-                          className="w-full pl-10 pr-4 py-2 border rounded-lg"
-                          placeholder="024XXXXXXX"
+                          type="text"
+                          value={transactionId}
+                          onChange={(e) => setTransactionId(e.target.value)}
+                          className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
+                          placeholder="Enter mobile money transaction ID"
                         />
                       </div>
-                    </div>
+
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Confirm Transaction ID *</label>
+                        <input
+                          type="text"
+                          value={confirmTransactionId}
+                          onChange={(e) => setConfirmTransactionId(e.target.value)}
+                          className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400 ${
+                            transactionIdError ? 'border-red-500' : ''
+                          }`}
+                          placeholder="Re-enter transaction ID to confirm"
+                        />
+                        {transactionIdError && (
+                          <p className="text-xs text-red-600 mt-1">{transactionIdError}</p>
+                        )}
+                      </div>
+                    </>
                   )}
 
                   {/* Payment Location */}
@@ -387,7 +591,7 @@ const StaffPayments = () => {
                       <button
                         onClick={() => setPaymentLocation('office')}
                         className={`p-3 border rounded-lg ${
-                          paymentLocation === 'office' ? 'bg-purple-50 border-purple-500' : ''
+                          paymentLocation === 'office' ? 'bg-purple-50 border-purple-500' : 'border-gray-300'
                         }`}
                       >
                         Office
@@ -395,7 +599,7 @@ const StaffPayments = () => {
                       <button
                         onClick={() => setPaymentLocation('field')}
                         className={`p-3 border rounded-lg ${
-                          paymentLocation === 'field' ? 'bg-orange-50 border-orange-500' : ''
+                          paymentLocation === 'field' ? 'bg-orange-50 border-orange-500' : 'border-gray-300'
                         }`}
                       >
                         Field
@@ -413,7 +617,7 @@ const StaffPayments = () => {
                     </button>
                     <button
                       onClick={handleProcessPayment}
-                      disabled={processing}
+                      disabled={processing || !paymentAmount || parseFloat(paymentAmount) <= 0}
                       className="flex-1 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50"
                     >
                       {processing ? 'Processing...' : 'Record Payment'}

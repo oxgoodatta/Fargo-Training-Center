@@ -3,15 +3,17 @@ import { motion } from 'framer-motion';
 import { 
   Users, Search, Trash2, Phone, Mail, X, User, 
   AlertCircle, CheckCircle, Loader, BookOpen, DollarSign,
-  UserPlus
+  UserPlus, Info
 } from 'lucide-react';
 import { studentService } from '../../api/services/studentService';
+import { courseService } from '../../api/services/courseService';
 import { authService } from '../../api/services/authService';
-import RegisterStudentModal from '../../components/admin/RegisterStudentModal'; // Import the modal
+import RegisterStudentModal from '../../components/admin/RegisterStudentModal';
 import toast from 'react-hot-toast';
 
 const Students = () => {
   const [students, setStudents] = useState([]);
+  const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -23,12 +25,25 @@ const Students = () => {
   const user = authService.getCurrentUser();
 
   useEffect(() => {
-    fetchStudents();
+    fetchData();
   }, []);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      await Promise.all([
+        fetchStudents(),
+        fetchCourses()
+      ]);
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const fetchStudents = async () => {
     try {
-      setLoading(true);
       const response = await studentService.getStudents({ 
         per_page: 100 
       });
@@ -36,8 +51,15 @@ const Students = () => {
     } catch (error) {
       console.error('Error fetching students:', error);
       toast.error('Failed to load students');
-    } finally {
-      setLoading(false);
+    }
+  };
+
+  const fetchCourses = async () => {
+    try {
+      const response = await courseService.getCourses({ active_only: true });
+      setCourses(response.data.courses || []);
+    } catch (error) {
+      console.error('Error fetching courses:', error);
     }
   };
 
@@ -66,7 +88,8 @@ const Students = () => {
 
   const handleRegisterSuccess = () => {
     setIsRegisterModalOpen(false);
-    fetchStudents(); // Refresh the list
+    fetchData(); // Refresh both students and courses
+    toast.success('Student registered successfully!');
   };
 
   const toggleExpand = (studentId) => {
@@ -80,6 +103,12 @@ const Students = () => {
   const calculateOutstandingFees = (registrations) => {
     if (!registrations || registrations.length === 0) return 0;
     return registrations.reduce((sum, reg) => sum + (reg.outstanding_balance || 0), 0);
+  };
+
+  // Get course details including original registration fee
+  const getCourseDetails = (courseId) => {
+    if (!courseId) return null;
+    return courses.find(c => c.id === courseId);
   };
 
   const formatCurrency = (amount) => {
@@ -239,26 +268,70 @@ const Students = () => {
                           <tr className="bg-primary-50">
                             <td colSpan="8" className="px-6 py-4">
                               <div className="space-y-2">
-                                <p className="text-sm font-medium text-primary-700 mb-2">Registered Courses:</p>
+                                <p className="text-sm font-medium text-primary-700 mb-2 flex items-center">
+                                  <Info className="w-4 h-4 mr-1" />
+                                  Registered Courses
+                                </p>
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                  {student.registrations.map((reg, idx) => (
-                                    <div key={idx} className="bg-white rounded-lg border border-primary-200 p-3">
-                                      <p className="font-medium text-gray-900">{reg.course_name}</p>
-                                      <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                        <span>Reg Fee: {formatCurrency(reg.registration_fee)}</span>
-                                        <span className="capitalize">Status: {reg.status}</span>
+                                  {student.registrations.map((reg, idx) => {
+                                    // Get course details to show original registration fee
+                                    const courseDetails = getCourseDetails(reg.course_id);
+                                    const originalRegFee = courseDetails?.registration_fee || reg.registration_fee;
+                                    
+                                    return (
+                                      <div key={idx} className="bg-white rounded-lg border border-primary-200 p-3">
+                                        <p className="font-medium text-gray-900">{reg.course_name}</p>
+                                        
+                                        {/* Course Fee Structure */}
+                                        <div className="mt-2 p-2 bg-blue-50 rounded-lg text-xs">
+                                          <p className="font-medium text-blue-700 mb-1">Course Fee Structure:</p>
+                                          <div className="flex justify-between text-blue-600">
+                                            <span>Registration Fee:</span>
+                                            <span className="font-bold">{formatCurrency(originalRegFee)}</span>
+                                          </div>
+                                          {courseDetails && (
+                                            <div className="flex justify-between text-blue-600 mt-0.5">
+                                              <span>Tuition Fee:</span>
+                                              <span className="font-bold">{formatCurrency(courseDetails.tuition_fee)}</span>
+                                            </div>
+                                          )}
+                                          <div className="flex justify-between text-blue-700 font-medium mt-1 pt-1 border-t border-blue-200">
+                                            <span>Total Course Fee:</span>
+                                            <span>{formatCurrency(reg.total_fee)}</span>
+                                          </div>
+                                        </div>
+
+                                        {/* Payment Summary */}
+                                        <div className="mt-2 text-xs">
+                                          <div className="flex justify-between text-gray-600">
+                                            <span>Status:</span>
+                                            <span className={`capitalize font-medium ${
+                                              reg.status === 'active' ? 'text-green-600' : 
+                                              reg.status === 'completed' ? 'text-blue-600' : 'text-gray-600'
+                                            }`}>
+                                              {reg.status}
+                                            </span>
+                                          </div>
+                                          <div className="flex justify-between text-gray-600 font-medium mt-1 pt-1 border-t border-gray-200">
+                                            <span>Total Paid:</span>
+                                            <span className="text-green-600">
+                                              {formatCurrency((reg.registration_fee || 0) + (reg.tuition_fee_paid || 0))}
+                                            </span>
+                                          </div>
+                                          <div className="flex justify-between mt-1">
+                                            <span className="font-medium">Outstanding:</span>
+                                            <span className={reg.outstanding_balance > 0 ? 'text-red-600 font-bold' : 'text-green-600 font-bold'}>
+                                              {formatCurrency(reg.outstanding_balance || 0)}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        <p className="text-xs text-gray-400 mt-2 pt-2 border-t border-gray-100">
+                                          Registered: {new Date(reg.registration_date).toLocaleDateString()}
+                                        </p>
                                       </div>
-                                      <div className="flex justify-between text-xs mt-1">
-                                        <span className="text-gray-500">Paid: {formatCurrency((reg.registration_fee || 0) + (reg.tuition_fee_paid || 0))}</span>
-                                        <span className={reg.outstanding_balance > 0 ? 'text-red-600 font-medium' : 'text-green-600'}>
-                                          Due: {formatCurrency(reg.outstanding_balance || 0)}
-                                        </span>
-                                      </div>
-                                      <p className="text-xs text-gray-400 mt-1">
-                                        Registered: {new Date(reg.registration_date).toLocaleDateString()}
-                                      </p>
-                                    </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               </div>
                             </td>

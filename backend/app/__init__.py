@@ -2,23 +2,45 @@ from flask import Flask, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from flask_bcrypt import Bcrypt
+from flask_mail import Mail  # ADD THIS IMPORT
 from config import config
 import os
+from dotenv import load_dotenv  # ADD THIS IMPORT
 
 # Initialize extensions
 db = SQLAlchemy()
 bcrypt = Bcrypt()
+mail = Mail()  # ADD THIS
 
 def create_app(config_name='default'):
     """Application factory"""
     app = Flask(__name__)
     
+    # Load environment variables from .env file
+    load_dotenv(override=True)  # <-- ADD THIS LINE
+    load_dotenv()  # ADD THIS
+    
     # Load configuration
     app.config.from_object(config[config_name])
+    
+    # Email configuration - ADD THESE LINES
+    app.config['MAIL_SERVER'] = 'smtp.gmail.com'
+    app.config['MAIL_PORT'] = 587
+    app.config['MAIL_USE_TLS'] = True
+    app.config['MAIL_USE_SSL'] = False
+    app.config['MAIL_USERNAME'] = os.environ.get('EMAIL_USER')
+    app.config['MAIL_PASSWORD'] = os.environ.get('EMAIL_PASSWORD')
+    app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('EMAIL_USER')
+    
+    # Print to verify (remove after testing)
+    print("📧 Email Config:")
+    print(f"  USER: {app.config['MAIL_USERNAME']}")
+    print(f"  PASSWORD: {'✅ Loaded' if app.config['MAIL_PASSWORD'] else '❌ Missing'}")
     
     # Initialize extensions with app
     db.init_app(app)
     bcrypt.init_app(app)
+    mail.init_app(app)  # ADD THIS
     
     # FIX CORS - Allow all origins for development
     CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
@@ -26,7 +48,8 @@ def create_app(config_name='default'):
     # Register blueprints/routes
     from app.routes import (
         student_bp, registration_bp, staff_bp, 
-        auth_bp, course_bp, payment_bp  # ADD payment_bp HERE
+        auth_bp, course_bp, payment_bp,
+        notification_bp
     )
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
@@ -34,7 +57,8 @@ def create_app(config_name='default'):
     app.register_blueprint(registration_bp, url_prefix='/api/registrations')
     app.register_blueprint(staff_bp, url_prefix='/api/staff')
     app.register_blueprint(course_bp, url_prefix='/api/courses')
-    app.register_blueprint(payment_bp, url_prefix='/api/payments')  # ADD THIS LINE
+    app.register_blueprint(payment_bp, url_prefix='/api/payments')
+    app.register_blueprint(notification_bp, url_prefix='/api/notifications')
     
     # Simple test route
     @app.route('/api/test', methods=['GET'])

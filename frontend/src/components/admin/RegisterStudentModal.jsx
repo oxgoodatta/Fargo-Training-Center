@@ -51,6 +51,23 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
     }
   }, [isOpen]);
 
+  // Auto-save signature when user draws
+  const handleSignatureChange = () => {
+    if (signatureRef.current && !signatureRef.current.isEmpty()) {
+      const signature = signatureRef.current.toDataURL();
+      setSignatureData(signature);
+      setSignatureEmpty(false);
+    } else {
+      setSignatureEmpty(true);
+      setSignatureData(null);
+    }
+  };
+
+  // Helper function to round to 2 decimal places
+  const roundToTwoDecimals = (value) => {
+    return Math.round((value || 0) * 100) / 100;
+  };
+
   const fetchCourses = async () => {
     try {
       const response = await courseService.getCourses({ active_only: true });
@@ -173,9 +190,9 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
     }
     
     if (step === 3) {
-      // Validate signature
-      if (signatureEmpty || !signatureData) {
-        toast.error('Please provide and save the student signature');
+      // Validate signature - auto-saved so just check if it exists
+      if (!signatureData || signatureEmpty) {
+        toast.error('Please provide a signature');
         return;
       }
     }
@@ -201,126 +218,116 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
     }
   };
 
-  const saveSignature = () => {
-    if (signatureRef.current && !signatureRef.current.isEmpty()) {
-      const signature = signatureRef.current.toDataURL();
-      setSignatureData(signature);
-      setSignatureEmpty(false);
-      toast.success('Signature saved');
-    } else {
-      toast.error('Please provide a signature first');
-    }
-  };
-
   const handleSubmit = async () => {
-  if (!signatureData) {
-    toast.error('Student signature is required');
-    return;
-  }
-
-  setLoading(true);
-  
-  try {
-    let studentId;
-    
-    if (searchMode === 'new') {
-      const studentData = {
-        first_name: formData.first_name,
-        last_name: formData.last_name,
-        date_of_birth: formData.date_of_birth,
-        gender: formData.gender,
-        phone: formData.phone,
-        email: formData.email || null,
-        password: 'password123',
-        registration_signature: signatureData
-      };
-      
-      const studentRes = await studentService.createStudent(studentData);
-      studentId = studentRes.data.student.id;
-    } else {
-      studentId = selectedStudent.id;
-    }
-    
-    const selectedCourse = courses.find(c => c.id === parseInt(formData.course_id));
-    
-    // Check if student already registered for this course
-    const studentRegsResponse = await apiClient.get('/registrations/', {
-      params: { 
-        student_id: studentId,
-        status: 'active'
-      }
-    });
-    
-    const studentRegs = studentRegsResponse.data.registrations || [];
-    
-    const alreadyRegistered = studentRegs.some(reg => 
-      Number(reg.course_id) === Number(selectedCourse.id)
-    );
-    
-    if (alreadyRegistered) {
-      toast.error('Student is already registered for this course');
-      setLoading(false);
+    if (!signatureData) {
+      toast.error('Student signature is required');
       return;
     }
+
+    setLoading(true);
     
-    // IMPORTANT FIX: Match the staff page format
-    const registrationData = {
-      student_id: studentId,
-      course_id: selectedCourse.id,
-      course_name: selectedCourse.name,
-      course_fee: selectedCourse.total_fee, // Send total fee as course_fee
-      branch: formData.branch,
-      // Send the amount paid as registration_fee (this is what staff page does)
-      registration_fee: formData.payment_method === 'cash' 
-        ? parseFloat(formData.amount_paid || selectedCourse.registration_fee) 
-        : selectedCourse.registration_fee,
-      total_fee: selectedCourse.total_fee,
-      registration_date: new Date().toISOString().split('T')[0],
-      status: 'active',
-      payment_location: formData.payment_location,
-      processed_by_staff_id: user?.id,
-      signature: signatureData,
-      payment_method: formData.payment_method,
-      momo_phone: formData.momo_phone,
-      momo_provider: formData.momo_provider
-    };
-    
-    // Remove amount_paid from the data (don't send it)
-    // Your backend doesn't expect it in the format you're using
-    
-    console.log('Sending registration data:', registrationData);
-    
-    const regRes = await apiClient.post('/registrations/', registrationData);
-    const newRegistration = regRes.data.registration;
-    
-    const paymentRecord = {
-      registration_id: newRegistration.id,
-      student_id: studentId,
-      amount: formData.payment_method === 'cash' 
-        ? parseFloat(formData.amount_paid || selectedCourse.registration_fee) 
-        : selectedCourse.registration_fee,
-      payment_method: formData.payment_method,
-      payment_location: formData.payment_location,
-      collected_by_staff_id: user?.id,
-      momo_phone_number: formData.momo_phone || null,
-      momo_provider: formData.momo_provider,
-      payment_type: 'registration',
-      status: 'completed'
-    };
-    
-    await paymentService.createPayment(paymentRecord);
-    
-    toast.success(searchMode === 'new' ? 'Student registered successfully!' : 'Course added successfully!');
-    onSuccess();
-    handleClose();
-    
-  } catch (error) {
-    console.error('Registration error:', error);
-    toast.error(error.response?.data?.error || 'Failed to register student');
-  } finally {
-    setLoading(false);
-  }
-};
+    try {
+      let studentId;
+      
+      if (searchMode === 'new') {
+        const studentData = {
+          first_name: formData.first_name,
+          last_name: formData.last_name,
+          date_of_birth: formData.date_of_birth,
+          gender: formData.gender,
+          phone: formData.phone,
+          email: formData.email || null,
+          password: 'password123',
+          registration_signature: signatureData
+        };
+        
+        const studentRes = await studentService.createStudent(studentData);
+        studentId = studentRes.data.student.id;
+      } else {
+        studentId = selectedStudent.id;
+      }
+      
+      const selectedCourse = courses.find(c => c.id === parseInt(formData.course_id));
+      
+      // Check if student already registered for this course
+      const studentRegsResponse = await apiClient.get('/registrations/', {
+        params: { 
+          student_id: studentId,
+          status: 'active'
+        }
+      });
+      
+      const studentRegs = studentRegsResponse.data.registrations || [];
+      
+      const alreadyRegistered = studentRegs.some(reg => 
+        Number(reg.course_id) === Number(selectedCourse.id)
+      );
+      
+      if (alreadyRegistered) {
+        toast.error('Student is already registered for this course');
+        setLoading(false);
+        return;
+      }
+      
+      // Round the amount paid to 2 decimal places
+      const amountPaid = roundToTwoDecimals(parseFloat(formData.amount_paid || 0));
+      
+      // IMPORTANT FIX: Match the staff page format
+      const registrationData = {
+        student_id: studentId,
+        course_id: selectedCourse.id,
+        course_name: selectedCourse.name,
+        course_fee: selectedCourse.total_fee, // Send total fee as course_fee
+        branch: formData.branch,
+        // Send the amount paid as registration_fee (this is what staff page does)
+        registration_fee: formData.payment_method === 'cash' 
+          ? amountPaid || selectedCourse.registration_fee
+          : selectedCourse.registration_fee,
+        total_fee: selectedCourse.total_fee,
+        registration_date: new Date().toISOString().split('T')[0],
+        status: 'active',
+        payment_location: formData.payment_location,
+        processed_by_staff_id: user?.id,
+        signature: signatureData,
+        payment_method: formData.payment_method,
+        momo_phone: formData.momo_phone,
+        momo_provider: formData.momo_provider
+      };
+      
+      // Remove amount_paid from the data (don't send it)
+      // Your backend doesn't expect it in the format you're using
+      
+      console.log('Sending registration data:', registrationData);
+      
+      const regRes = await apiClient.post('/registrations/', registrationData);
+      const newRegistration = regRes.data.registration;
+      
+      const paymentRecord = {
+        registration_id: newRegistration.id,
+        student_id: studentId,
+        amount: amountPaid || selectedCourse.registration_fee,
+        payment_method: formData.payment_method,
+        payment_location: formData.payment_location,
+        collected_by_staff_id: user?.id,
+        momo_phone_number: formData.momo_phone || null,
+        momo_provider: formData.momo_provider,
+        payment_type: 'registration',
+        status: 'completed'
+      };
+      
+      await paymentService.createPayment(paymentRecord);
+      
+      toast.success(searchMode === 'new' ? 'Student registered successfully!' : 'Course added successfully!');
+      onSuccess();
+      handleClose();
+      
+    } catch (error) {
+      console.error('Registration error:', error);
+      toast.error(error.response?.data?.error || 'Failed to register student');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleClose = () => {
     setStep(1);
@@ -648,13 +655,13 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
               </div>
             )}
 
-            {/* Step 3: Signature */}
+            {/* Step 3: Signature - Auto-save on draw */}
             {step === 3 && (
               <div className="space-y-4">
                 <div className="bg-primary-50 p-4 rounded-lg">
                   <p className="text-sm text-primary-700 flex items-center">
                     <PenTool className="w-4 h-4 mr-2" />
-                    Student Signature Required
+                    Student Signature Required (Auto-saved)
                   </p>
                   {selectedCourse && (
                     <p className="text-xs text-primary-600 mt-2">
@@ -671,6 +678,7 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
                 <div className="border-2 border-gray-300 rounded-lg overflow-hidden bg-white">
                   <SignatureCanvas
                     ref={signatureRef}
+                    onEnd={handleSignatureChange}
                     canvasProps={{
                       className: 'w-full h-48',
                       style: { 
@@ -683,34 +691,26 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
                   />
                 </div>
 
-                <div className="flex justify-center space-x-4">
+                <div className="flex justify-center">
                   <button
                     type="button"
                     onClick={clearSignature}
                     className="px-4 py-2 border border-gray-300 rounded-lg flex items-center hover:bg-gray-50 transition-colors"
                   >
                     <RotateCcw className="w-4 h-4 mr-2" />
-                    Clear
-                  </button>
-                  <button
-                    type="button"
-                    onClick={saveSignature}
-                    className="px-4 py-2 bg-secondary-500 text-white rounded-lg flex items-center hover:bg-secondary-600 transition-colors"
-                  >
-                    <Save className="w-4 h-4 mr-2" />
-                    Save Signature
+                    Clear Signature
                   </button>
                 </div>
 
-                {signatureData && (
+                {signatureData && !signatureEmpty && (
                   <div className="bg-green-50 p-3 rounded-lg text-green-700 text-sm flex items-center">
                     <CheckCircle className="w-4 h-4 mr-2" />
-                    Signature saved successfully
+                    Signature captured successfully
                   </div>
                 )}
 
                 {/* Preview of saved signature */}
-                {signatureData && (
+                {signatureData && !signatureEmpty && (
                   <div className="mt-4">
                     <p className="text-sm font-medium mb-2">Signature Preview:</p>
                     <div className="border rounded-lg p-4 bg-gray-50">
@@ -721,7 +721,7 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
               </div>
             )}
 
-            {/* Step 4: Payment */}
+            {/* Step 4: Payment - FIXED SCROLL ISSUE */}
             {step === 4 && selectedCourse && (
               <div className="space-y-4">
                 <div className="bg-blue-50 p-4 rounded-lg">
@@ -800,6 +800,37 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
                         />
                       </div>
                     </div>
+
+                    {/* MoMo Amount Field - FIXED SCROLL ISSUE */}
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Amount Paid (₵)</label>
+                      <input
+                        type="number"
+                        value={formData.amount_paid}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          if (value === '' || !isNaN(parseFloat(value))) {
+                            if (value !== '') {
+                              const rounded = Math.round(parseFloat(value) * 100) / 100;
+                              setFormData({...formData, amount_paid: rounded.toString()});
+                            } else {
+                              setFormData({...formData, amount_paid: value});
+                            }
+                          }
+                        }}
+                        onWheel={(e) => e.target.blur()} // Prevents scroll wheel from changing value
+                        max={selectedCourse.registration_fee}
+                        min="0"
+                        step="0.01"
+                        className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
+                        placeholder="0.00"
+                      />
+                      {formData.amount_paid && parseFloat(formData.amount_paid) < selectedCourse.registration_fee && (
+                        <p className="text-xs text-yellow-600 mt-1">
+                          Outstanding balance: {formatCurrency(selectedCourse.registration_fee - parseFloat(formData.amount_paid))}
+                        </p>
+                      )}
+                    </div>
                   </>
                 )}
 
@@ -809,8 +840,21 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
                     <input
                       type="number"
                       value={formData.amount_paid}
-                      onChange={(e) => setFormData({...formData, amount_paid: e.target.value})}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === '' || !isNaN(parseFloat(value))) {
+                          if (value !== '') {
+                            const rounded = Math.round(parseFloat(value) * 100) / 100;
+                            setFormData({...formData, amount_paid: rounded.toString()});
+                          } else {
+                            setFormData({...formData, amount_paid: value});
+                          }
+                        }
+                      }}
+                      onWheel={(e) => e.target.blur()} // Prevents scroll wheel from changing value
                       max={selectedCourse.registration_fee}
+                      min="0"
+                      step="0.01"
                       className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
                       placeholder="0.00"
                     />

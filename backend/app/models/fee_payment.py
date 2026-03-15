@@ -20,6 +20,10 @@ class FeePayment(db.Model):
     momo_phone_number = db.Column(db.String(15))
     momo_provider = db.Column(db.String(20))  # MTN, Airtel, Vodafone, etc.
     
+    # NEW: Transaction ID fields (for MoMo payments)
+    transaction_id = db.Column(db.String(100), nullable=True)  # Store the transaction ID entered by user
+    confirm_transaction_id = db.Column(db.String(100), nullable=True)  # Store confirmation transaction ID
+    
     # Payment location (important requirement)
     payment_location = db.Column(db.String(20), nullable=False)  # 'office' or 'field'
     
@@ -59,6 +63,9 @@ class FeePayment(db.Model):
             'momo_transaction_id': self.momo_transaction_id,
             'momo_phone_number': self.momo_phone_number,
             'momo_provider': self.momo_provider,
+            # NEW: Add transaction_id and confirm_transaction_id to the dictionary
+            'transaction_id': self.transaction_id,
+            'confirm_transaction_id': self.confirm_transaction_id,
             'payment_location': self.payment_location,
             'collected_by_staff_id': self.collected_by_staff_id,
             'collected_by_staff_name': f"{self.collected_by.first_name} {self.collected_by.last_name}" if self.collected_by else None,

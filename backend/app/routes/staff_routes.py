@@ -222,6 +222,91 @@ def get_staff(staff_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 404
 
+
+@bp.route('/<int:staff_id>', methods=['PUT'])
+def update_staff(staff_id):
+    """Update staff member details"""
+    try:
+        staff = Staff.query.get_or_404(staff_id)
+        data = request.get_json()
+        
+        # Update fields if provided
+        if data.get('first_name'):
+            staff.first_name = data['first_name'].strip()
+        
+        if data.get('last_name'):
+            staff.last_name = data['last_name'].strip()
+        
+        if data.get('email'):
+            # Check if email already exists for another staff
+            existing_email = Staff.query.filter(
+                Staff.email == data['email'].strip(),
+                Staff.id != staff_id
+            ).first()
+            if existing_email:
+                return jsonify({'error': 'Email already registered'}), 400
+            staff.email = data['email'].strip()
+        
+        if data.get('phone'):
+            # Check if phone already exists for another staff
+            existing_phone = Staff.query.filter(
+                Staff.phone == data['phone'].strip(),
+                Staff.id != staff_id
+            ).first()
+            if existing_phone:
+                return jsonify({'error': 'Phone number already registered'}), 400
+            staff.phone = data['phone'].strip()
+        
+        # Role and branch might be updatable depending on your permissions
+        if data.get('role'):
+            staff.role = data['role'].strip()
+        
+        if data.get('branch'):
+            staff.branch = data['branch'].strip()
+        
+        staff.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Staff updated successfully',
+            'staff': staff.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+
+@bp.route('/<int:staff_id>/password', methods=['PUT'])
+def change_staff_password(staff_id):
+    """Change staff password"""
+    try:
+        staff = Staff.query.get_or_404(staff_id)
+        data = request.get_json()
+        
+        # Verify current password
+        if not staff.verify_password(data.get('current_password', '')):
+            return jsonify({'error': 'Current password is incorrect'}), 401
+        
+        # Validate new password
+        new_password = data.get('new_password', '')
+        if len(new_password) < 6:
+            return jsonify({'error': 'Password must be at least 6 characters'}), 400
+        
+        # Update password
+        staff.password = new_password
+        staff.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Password changed successfully'
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
 @bp.route('/<int:staff_id>/deactivate', methods=['PUT'])
 def deactivate_staff(staff_id):
     """Deactivate staff member (soft delete)"""
