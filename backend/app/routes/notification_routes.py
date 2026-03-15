@@ -6,13 +6,44 @@ from app.models.registration import Registration
 from datetime import datetime
 from flask_mail import Message
 import os
+import base64
 import traceback
 
 bp = Blueprint('notifications', __name__)
 
-# Get the base URL for your app (you can set this in .env or config)
-BASE_URL = os.environ.get('BASE_URL', 'http://localhost:5000')
-LOGO_URL = f"{BASE_URL}/static/images/logo.jpeg"
+def get_logo_base64():
+    """Read logo file and convert to base64 for email embedding"""
+    try:
+        # Get the absolute path to the logo
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # Go up one level from routes folder to backend, then to static/images
+        logo_path = os.path.join(current_dir, '..', 'static', 'images', 'logo.jpeg')
+        logo_path = os.path.abspath(logo_path)
+        
+        print(f"🔍 Looking for logo at: {logo_path}")
+        
+        if os.path.exists(logo_path):
+            with open(logo_path, 'rb') as logo_file:
+                logo_data = logo_file.read()
+                logo_base64 = base64.b64encode(logo_data).decode('utf-8')
+                print(f"✅ Logo loaded successfully! Size: {len(logo_data)} bytes")
+                return f"data:image/jpeg;base64,{logo_base64}"
+        else:
+            print(f"❌ Logo not found at: {logo_path}")
+            # Try alternative path
+            alt_path = os.path.join('static', 'images', 'logo.jpeg')
+            if os.path.exists(alt_path):
+                with open(alt_path, 'rb') as logo_file:
+                    logo_data = logo_file.read()
+                    logo_base64 = base64.b64encode(logo_data).decode('utf-8')
+                    print(f"✅ Logo found at alternative path!")
+                    return f"data:image/jpeg;base64,{logo_base64}"
+            else:
+                print(f"❌ Also tried: {alt_path}")
+            return None
+    except Exception as e:
+        print(f"⚠️ Error loading logo: {e}")
+        return None
 
 def send_email(subject, recipients, html_body):
     """Send email using Flask-Mail (synchronous for debugging)"""
@@ -76,8 +107,16 @@ def personalize_message(message, student_data):
     return message
 
 def create_html_template(content):
-    """Create HTML email template with logo"""
+    """Create HTML email template with embedded logo"""
     current_year = datetime.now().year
+    logo_data = get_logo_base64()
+    
+    # If logo loaded successfully, use it, otherwise show text
+    if logo_data:
+        logo_html = f'<img src="{logo_data}" alt="Fargo Training Center Logo" style="max-width: 120px; max-height: 120px; width: auto; height: auto; border-radius: 8px; background: white; padding: 8px; display: inline-block;" />'
+    else:
+        logo_html = '<div style="color: white; font-size: 32px; font-weight: bold; margin: 10px 0;">FARGO</div>'
+    
     return f"""
     <!DOCTYPE html>
     <html>
@@ -104,7 +143,7 @@ def create_html_template(content):
             .header {{ 
                 background: linear-gradient(135deg, #f97316, #fb923c); 
                 color: white; 
-                padding: 20px; 
+                padding: 30px 20px; 
                 text-align: center; 
             }}
             .logo-container {{
@@ -112,10 +151,13 @@ def create_html_template(content):
             }}
             .logo {{
                 max-width: 120px;
+                max-height: 120px;
+                width: auto;
                 height: auto;
                 border-radius: 8px;
                 background: white;
                 padding: 8px;
+                display: inline-block;
             }}
             .header h1 {{ 
                 margin: 10px 0 0 0; 
@@ -155,7 +197,7 @@ def create_html_template(content):
                 color: white !important;
                 text-decoration: none;
                 border-radius: 5px;
-                margin: 10px 0;
+                margin: 20px 0;
                 font-weight: 600;
             }}
             .button:hover {{
@@ -171,9 +213,7 @@ def create_html_template(content):
         <div class="container">
             <div class="header">
                 <div class="logo-container">
-                    <img src="{LOGO_URL}" alt="Fargo Training Center Logo" class="logo" 
-                         onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
-                    <div style="display:none; color: white; font-size: 24px; font-weight: bold;">FARGO</div>
+                    {logo_html}
                 </div>
                 <h1>Fargo Training Center</h1>
             </div>
@@ -184,7 +224,7 @@ def create_html_template(content):
                 <p>© {current_year} Fargo Training Center. All rights reserved.</p>
                 <p>This is an automated message, please do not reply.</p>
                 <p style="margin-top: 10px; font-size: 11px;">
-                    <a href="{BASE_URL}" style="color: #f97316; text-decoration: none;">Visit our website</a>
+                    <a href="#" style="color: #f97316; text-decoration: none;">Visit our website</a>
                 </p>
             </div>
         </div>
@@ -275,7 +315,7 @@ def send_notification():
                 personalized_subject = personalize_message(data['subject'], student_data)
                 personalized_message = personalize_message(data['message'], student_data)
                 
-                # Create HTML with logo
+                # Create HTML with embedded logo
                 html_content = create_html_template(personalized_message.replace('\n', '<br>'))
                 
                 # Send synchronously to see real results
@@ -325,7 +365,7 @@ def send_notification():
 
 @bp.route('/test-email', methods=['GET'])
 def test_email():
-    """Test email sending with logo"""
+    """Test email sending with embedded logo"""
     try:
         test_email = os.environ.get('EMAIL_USER')
         if not test_email:
@@ -335,19 +375,19 @@ def test_email():
         
         # Create a test message with logo
         test_content = """
-        <h2 style="color: #f97316;">✨ Test Email with Logo ✨</h2>
+        <h2 style="color: #f97316;">✨ Test Email with Embedded Logo ✨</h2>
         
         <p>If you receive this email with the Fargo Training Center logo at the top, 
         your email system is working perfectly!</p>
         
         <div class="info-box">
-            <p><strong>✓ Email configuration is correct</strong></p>
-            <p><strong>✓ Logo is displaying properly</strong></p>
+            <p><strong>✓ Logo is embedded directly in the email</strong></p>
+            <p><strong>✓ No external internet needed to view logo</strong></p>
             <p><strong>✓ HTML template is working</strong></p>
             <p><strong>✓ Variables can be personalized</strong></p>
         </div>
         
-        <p>This confirms that your Gmail credentials are correct and Flask-Mail is properly configured with your logo.</p>
+        <p>This confirms that your email configuration is correct and the logo is properly embedded.</p>
         
         <p style="margin-top: 20px;">
             <a href="#" class="button">View Your Account</a>
@@ -361,14 +401,14 @@ def test_email():
         html_content = create_html_template(test_content)
         
         success, error = send_email(
-            subject="Test Email with Logo - Fargo Training Center",
+            subject="Test Email with Embedded Logo - Fargo Training Center",
             recipients=[test_email],
             html_body=html_content
         )
         
         if success:
             print("✅ Test email sent successfully")
-            return jsonify({'message': '✅ Test email with logo sent successfully! Check your inbox.'}), 200
+            return jsonify({'message': '✅ Test email with embedded logo sent successfully! Check your inbox.'}), 200
         else:
             print(f"❌ Test email failed: {error}")
             return jsonify({'error': error}), 500
