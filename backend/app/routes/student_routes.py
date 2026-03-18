@@ -3,25 +3,44 @@ from app import db
 from app.models import Student, Registration, Staff
 from datetime import datetime
 import re
+import time  # Add this for timestamp fallback
 
 bp = Blueprint('students', __name__)
 
 def generate_student_id():
-    """Generate unique student ID: STU-YYYY-XXX"""
+    """Generate unique student ID: STU-YYYY-XXXXXX (unlimited)"""
     year = datetime.now().year
-    last_student = Student.query.order_by(Student.id.desc()).first()
     
-    if last_student and last_student.student_id:
-        # Extract sequence number from existing ID
-        match = re.search(r'STU-\d{4}-(\d{3})', last_student.student_id)
-        if match:
-            sequence = int(match.group(1)) + 1
+    # Try up to 10 times to generate a unique reference
+    for attempt in range(10):
+        # Get the latest student overall (not just for this year)
+        last_student = Student.query.order_by(Student.id.desc()).first()
+        
+        if last_student and last_student.student_id:
+            # Try to extract number from any format
+            match = re.search(r'(\d+)$', last_student.student_id)
+            if match:
+                # Get the last number and increment
+                last_number = int(match.group(1))
+                sequence = last_number + 1
+            else:
+                # Fallback to ID if pattern not found
+                sequence = last_student.id + 1
         else:
+            # First student ever
             sequence = 1
-    else:
-        sequence = 1
+        
+        # Format with 6 digits (000001 to 999999 - practically unlimited)
+        student_id = f"STU-{year}-{sequence:06d}"
+        
+        # Check if this ID already exists (extra safety)
+        existing = Student.query.filter_by(student_id=student_id).first()
+        if not existing:
+            return student_id
     
-    return f"STU-{year}-{sequence:03d}"
+    # If all attempts fail, use timestamp as fallback
+    timestamp = int(time.time())
+    return f"STU-{year}-{timestamp}"
 
 @bp.route('/', methods=['POST'])
 def create_student():
@@ -56,7 +75,7 @@ def create_student():
             if existing_staff_email:
                 return jsonify({'error': 'Email already registered as staff'}), 400
         
-        # Generate student ID
+        # Generate student ID (now unlimited)
         student_id = generate_student_id()
         
         # Convert date string to date object
@@ -68,7 +87,7 @@ def create_student():
         # Get password from request or use default
         password = data.get('password', 'password123')
         
-        # Create new student - FIXED: Removed fields that don't exist in model
+        # Create new student
         new_student = Student(
             student_id=student_id,
             first_name=data['first_name'].strip(),

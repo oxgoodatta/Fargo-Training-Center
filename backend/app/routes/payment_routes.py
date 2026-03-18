@@ -5,24 +5,45 @@ from datetime import datetime
 import re
 import csv
 from io import StringIO
+from sqlalchemy import exc  # Add this import for integrity error handling
+import time  # Add this for timestamp fallback
 
 bp = Blueprint('payments', __name__)
 
 def generate_payment_reference():
-    """Generate unique payment reference: PAY-YYYY-XXX"""
+    """Generate unique payment reference: PAY-YYYY-XXXXXX (unlimited)"""
     year = datetime.now().year
-    last_payment = FeePayment.query.order_by(FeePayment.id.desc()).first()
     
-    if last_payment and last_payment.payment_reference:
-        match = re.search(r'PAY-\d{4}-(\d{3})', last_payment.payment_reference)
-        if match:
-            sequence = int(match.group(1)) + 1
+    # Try up to 10 times to generate a unique reference
+    for attempt in range(10):
+        # Get the latest payment overall (not just for this year)
+        last_payment = FeePayment.query.order_by(FeePayment.id.desc()).first()
+        
+        if last_payment and last_payment.payment_reference:
+            # Try to extract number from any format
+            match = re.search(r'(\d+)$', last_payment.payment_reference)
+            if match:
+                # Get the last number and increment
+                last_number = int(match.group(1))
+                sequence = last_number + 1
+            else:
+                # Fallback to ID if pattern not found
+                sequence = last_payment.id + 1
         else:
+            # First payment ever
             sequence = 1
-    else:
-        sequence = 1
+        
+        # Format with 6 digits (000001 to 999999 - practically unlimited)
+        payment_reference = f"PAY-{year}-{sequence:06d}"
+        
+        # Check if this reference already exists (extra safety)
+        existing = FeePayment.query.filter_by(payment_reference=payment_reference).first()
+        if not existing:
+            return payment_reference
     
-    return f"PAY-{year}-{sequence:03d}"
+    # If all attempts fail, use timestamp as fallback
+    timestamp = int(time.time())
+    return f"PAY-{year}-{timestamp}"
 
 @bp.route('/', methods=['POST'])
 def create_payment():
@@ -55,36 +76,59 @@ def create_payment():
         else:
             payment_type = 'partial'
         
-        # Generate payment reference
-        payment_reference = generate_payment_reference()
-        
         # Handle collected_by_staff_id (can be None for online payments)
         collected_by_staff_id = data.get('collected_by_staff_id')
         
-        # Create payment record - UPDATED to use transaction_id and confirm_transaction_id
-        payment = FeePayment(
-            payment_reference=payment_reference,
-            registration_id=registration.id,
-            student_id=data['student_id'],
-            amount=amount,
-            payment_type=payment_type,
-            payment_method=data['payment_method'],
-            momo_transaction_id=data.get('momo_transaction_id'),  # Keep for backward compatibility
-            momo_phone_number=data.get('momo_phone_number'),
-            momo_provider=data.get('momo_provider'),
-            transaction_id=data.get('transaction_id'),  # NEW: Store transaction ID
-            confirm_transaction_id=data.get('confirm_transaction_id'),  # NEW: Store confirmation
-            payment_location=data['payment_location'],
-            collected_by_staff_id=collected_by_staff_id,
-            status='completed',
-            payment_date=datetime.utcnow().date()
-        )
+        # Generate payment reference with retry logic
+        max_retries = 5
+        payment_reference = None
+        payment = None
+        
+        for attempt in range(max_retries):
+            try:
+                payment_reference = generate_payment_reference()
+                
+                # Create payment record - UPDATED to use transaction_id and confirm_transaction_id
+                payment = FeePayment(
+                    payment_reference=payment_reference,
+                    registration_id=registration.id,
+                    student_id=data['student_id'],
+                    amount=amount,
+                    payment_type=payment_type,
+                    payment_method=data['payment_method'],
+                    momo_transaction_id=data.get('momo_transaction_id'),  # Keep for backward compatibility
+                    momo_phone_number=data.get('momo_phone_number'),
+                    momo_provider=data.get('momo_provider'),
+                    transaction_id=data.get('transaction_id'),  # Store transaction ID
+                    confirm_transaction_id=data.get('confirm_transaction_id'),  # Store confirmation
+                    payment_location=data['payment_location'],
+                    collected_by_staff_id=collected_by_staff_id,
+                    status='completed',
+                    payment_date=datetime.utcnow().date()
+                )
+                
+                db.session.add(payment)
+                db.session.commit()
+                break  # Success, exit retry loop
+                
+            except exc.IntegrityError as e:
+                db.session.rollback()
+                if "payment_reference" in str(e):
+                    print(f"Payment reference {payment_reference} already exists, retrying... (attempt {attempt + 1}/{max_retries})")
+                    if attempt == max_retries - 1:
+                        # Last attempt failed
+                        print(f"Failed to create payment after {max_retries} attempts")
+                        return jsonify({'error': 'Could not generate unique payment reference. Please try again.'}), 500
+                    # Otherwise, try again with a new reference
+                    continue
+                else:
+                    # Some other integrity error
+                    raise e
         
         # Update registration
         registration.tuition_fee_paid = registration.tuition_fee_paid + amount
         registration.calculate_balance()
         
-        db.session.add(payment)
         db.session.commit()
         
         return jsonify({

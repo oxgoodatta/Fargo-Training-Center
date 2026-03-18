@@ -29,6 +29,11 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
   const [signatureData, setSignatureData] = useState(null);
   const [signatureEmpty, setSignatureEmpty] = useState(true);
   
+  // New state for transaction ID fields
+  const [transactionId, setTransactionId] = useState('');
+  const [confirmTransactionId, setConfirmTransactionId] = useState('');
+  const [transactionIdError, setTransactionIdError] = useState('');
+  
   const [formData, setFormData] = useState({
     first_name: '',
     last_name: '',
@@ -62,6 +67,19 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
       setSignatureData(null);
     }
   };
+
+  // Validate transaction IDs match
+  useEffect(() => {
+    if (formData.payment_method === 'momo' && transactionId && confirmTransactionId) {
+      if (transactionId !== confirmTransactionId) {
+        setTransactionIdError('Transaction IDs do not match');
+      } else {
+        setTransactionIdError('');
+      }
+    } else {
+      setTransactionIdError('');
+    }
+  }, [transactionId, confirmTransactionId, formData.payment_method]);
 
   // Helper function to round to 2 decimal places
   const roundToTwoDecimals = (value) => {
@@ -224,6 +242,18 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
       return;
     }
 
+    // Validate MoMo transaction IDs if payment method is momo
+    if (formData.payment_method === 'momo') {
+      if (!transactionId || !confirmTransactionId) {
+        toast.error('Please enter both transaction ID and confirmation');
+        return;
+      }
+      if (transactionId !== confirmTransactionId) {
+        toast.error('Transaction IDs do not match');
+        return;
+      }
+    }
+
     setLoading(true);
     
     try {
@@ -272,14 +302,13 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
       // Round the amount paid to 2 decimal places
       const amountPaid = roundToTwoDecimals(parseFloat(formData.amount_paid || 0));
       
-      // IMPORTANT FIX: Match the staff page format
+      // Registration data
       const registrationData = {
         student_id: studentId,
         course_id: selectedCourse.id,
         course_name: selectedCourse.name,
-        course_fee: selectedCourse.total_fee, // Send total fee as course_fee
+        course_fee: selectedCourse.total_fee,
         branch: formData.branch,
-        // Send the amount paid as registration_fee (this is what staff page does)
         registration_fee: formData.payment_method === 'cash' 
           ? amountPaid || selectedCourse.registration_fee
           : selectedCourse.registration_fee,
@@ -294,14 +323,12 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
         momo_provider: formData.momo_provider
       };
       
-      // Remove amount_paid from the data (don't send it)
-      // Your backend doesn't expect it in the format you're using
-      
       console.log('Sending registration data:', registrationData);
       
       const regRes = await apiClient.post('/registrations/', registrationData);
       const newRegistration = regRes.data.registration;
       
+      // Payment record with transaction IDs for MoMo
       const paymentRecord = {
         registration_id: newRegistration.id,
         student_id: studentId,
@@ -311,6 +338,8 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
         collected_by_staff_id: user?.id,
         momo_phone_number: formData.momo_phone || null,
         momo_provider: formData.momo_provider,
+        transaction_id: formData.payment_method === 'momo' ? transactionId : null,
+        confirm_transaction_id: formData.payment_method === 'momo' ? confirmTransactionId : null,
         payment_type: 'registration',
         status: 'completed'
       };
@@ -336,6 +365,9 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
     setSearchTerm('');
     setSignatureData(null);
     setSignatureEmpty(true);
+    setTransactionId('');
+    setConfirmTransactionId('');
+    setTransactionIdError('');
     setFormData({
       first_name: '',
       last_name: '',
@@ -361,6 +393,12 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
   };
 
   const selectedCourse = courses.find(c => c.id === parseInt(formData.course_id));
+
+  // Helper function to check if amount is valid (at least 100 GHS)
+  const isAmountValid = () => {
+    const amount = parseFloat(formData.amount_paid);
+    return !isNaN(amount) && amount >= 100;
+  };
 
   if (!isOpen) return null;
 
@@ -721,7 +759,7 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
               </div>
             )}
 
-            {/* Step 4: Payment - FIXED SCROLL ISSUE */}
+            {/* Step 4: Payment - WITH TRANSACTION ID FIELDS */}
             {step === 4 && selectedCourse && (
               <div className="space-y-4">
                 <div className="bg-blue-50 p-4 rounded-lg">
@@ -733,6 +771,12 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
                       Signature verified
                     </p>
                   )}
+                  {formData.amount_paid && parseFloat(formData.amount_paid) < 100 && (
+                    <p className="text-xs text-red-600 mt-2 flex items-center">
+                      <AlertCircle className="w-3 h-3 mr-1" />
+                      Minimum payment amount is ₵100
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -740,7 +784,11 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
                   <div className="grid grid-cols-2 gap-3">
                     <button
                       type="button"
-                      onClick={() => setFormData({...formData, payment_method: 'cash'})}
+                      onClick={() => {
+                        setFormData({...formData, payment_method: 'cash'});
+                        setTransactionId('');
+                        setConfirmTransactionId('');
+                      }}
                       className={`p-3 border rounded-lg flex items-center justify-center space-x-2 ${
                         formData.payment_method === 'cash' ? 'border-green-500 bg-green-50' : 'border-gray-300'
                       }`}
@@ -750,7 +798,9 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setFormData({...formData, payment_method: 'momo'})}
+                      onClick={() => {
+                        setFormData({...formData, payment_method: 'momo'});
+                      }}
                       className={`p-3 border rounded-lg flex items-center justify-center space-x-2 ${
                         formData.payment_method === 'momo' ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
                       }`}
@@ -801,9 +851,37 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
                       </div>
                     </div>
 
-                    {/* MoMo Amount Field - FIXED SCROLL ISSUE */}
+                    {/* TRANSACTION ID FIELDS */}
                     <div>
-                      <label className="block text-sm font-medium mb-2">Amount Paid (₵)</label>
+                      <label className="block text-sm font-medium mb-2">Transaction ID *</label>
+                      <input
+                        type="text"
+                        value={transactionId}
+                        onChange={(e) => setTransactionId(e.target.value)}
+                        className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
+                        placeholder="Enter mobile money transaction ID"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Confirm Transaction ID *</label>
+                      <input
+                        type="text"
+                        value={confirmTransactionId}
+                        onChange={(e) => setConfirmTransactionId(e.target.value)}
+                        className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400 ${
+                          transactionIdError ? 'border-red-500' : 'border-gray-300'
+                        }`}
+                        placeholder="Re-enter transaction ID to confirm"
+                      />
+                      {transactionIdError && (
+                        <p className="text-xs text-red-600 mt-1">{transactionIdError}</p>
+                      )}
+                    </div>
+
+                    {/* MoMo Amount Field */}
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Amount Paid (₵) *</label>
                       <input
                         type="number"
                         value={formData.amount_paid}
@@ -818,16 +896,21 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
                             }
                           }
                         }}
-                        onWheel={(e) => e.target.blur()} // Prevents scroll wheel from changing value
-                        max={selectedCourse.registration_fee}
+                        onWheel={(e) => e.target.blur()}
+                        max={selectedCourse.total_fee}
                         min="0"
                         step="0.01"
                         className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
                         placeholder="0.00"
                       />
-                      {formData.amount_paid && parseFloat(formData.amount_paid) < selectedCourse.registration_fee && (
+                      {formData.amount_paid && parseFloat(formData.amount_paid) < 100 && (
+                        <p className="text-xs text-red-600 mt-1">
+                          Minimum payment amount is ₵100.00
+                        </p>
+                      )}
+                      {formData.amount_paid && parseFloat(formData.amount_paid) >= 100 && parseFloat(formData.amount_paid) < selectedCourse.registration_fee && (
                         <p className="text-xs text-yellow-600 mt-1">
-                          Outstanding balance: {formatCurrency(selectedCourse.registration_fee - parseFloat(formData.amount_paid))}
+                          Outstanding balance for registration: {formatCurrency(selectedCourse.registration_fee - parseFloat(formData.amount_paid))}
                         </p>
                       )}
                     </div>
@@ -836,7 +919,7 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
 
                 {formData.payment_method === 'cash' && (
                   <div>
-                    <label className="block text-sm font-medium mb-2">Amount Paid (₵)</label>
+                    <label className="block text-sm font-medium mb-2">Amount Paid (₵) *</label>
                     <input
                       type="number"
                       value={formData.amount_paid}
@@ -851,16 +934,21 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
                           }
                         }
                       }}
-                      onWheel={(e) => e.target.blur()} // Prevents scroll wheel from changing value
-                      max={selectedCourse.registration_fee}
+                      onWheel={(e) => e.target.blur()}
+                      max={selectedCourse.total_fee}
                       min="0"
                       step="0.01"
                       className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
                       placeholder="0.00"
                     />
-                    {formData.amount_paid && parseFloat(formData.amount_paid) < selectedCourse.registration_fee && (
+                    {formData.amount_paid && parseFloat(formData.amount_paid) < 100 && (
+                      <p className="text-xs text-red-600 mt-1">
+                        Minimum payment amount is ₵100.00
+                      </p>
+                    )}
+                    {formData.amount_paid && parseFloat(formData.amount_paid) >= 100 && parseFloat(formData.amount_paid) < selectedCourse.registration_fee && (
                       <p className="text-xs text-yellow-600 mt-1">
-                        Outstanding balance: {formatCurrency(selectedCourse.registration_fee - parseFloat(formData.amount_paid))}
+                        Outstanding balance for registration: {formatCurrency(selectedCourse.registration_fee - parseFloat(formData.amount_paid))}
                       </p>
                     )}
                   </div>
@@ -914,8 +1002,8 @@ const RegisterStudentModal = ({ isOpen, onClose, onSuccess, user }) => {
               ) : (
                 <button
                   onClick={handleSubmit}
-                  disabled={loading || !signatureData}
-                  className="px-6 py-2 bg-gradient-to-r from-secondary-500 to-secondary-600 text-white rounded-lg hover:shadow-lg disabled:opacity-50"
+                  disabled={loading || !signatureData || !isAmountValid()}
+                  className="px-6 py-2 bg-gradient-to-r from-secondary-500 to-secondary-600 text-white rounded-lg hover:shadow-lg disabled:opacity-50 disabled:bg-gray-400 disabled:from-gray-400 disabled:to-gray-500"
                 >
                   {loading ? 'Processing...' : 'Complete Registration'}
                 </button>

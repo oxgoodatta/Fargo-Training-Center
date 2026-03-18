@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
-  UserCog, Plus, Search, Filter, Edit, Trash2, 
+  UserCog, Plus, Search, Filter, Trash2, 
   Mail, Phone, MapPin, Briefcase, IdCard, 
   CheckCircle, XCircle, Shield, Calendar,
   UserCheck, Users, LayoutGrid, Table, AlertCircle
@@ -42,21 +42,6 @@ const Staff = () => {
       toast.error('Failed to load staff members');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleToggleStatus = async (staffId, currentStatus) => {
-    try {
-      if (currentStatus) {
-        await staffService.deactivateStaff(staffId);
-        toast.success('Staff member deactivated');
-      } else {
-        await staffService.activateStaff(staffId);
-        toast.success('Staff member activated');
-      }
-      fetchStaff();
-    } catch (error) {
-      toast.error(error.response?.data?.error || 'Failed to update status');
     }
   };
 
@@ -290,29 +275,8 @@ const Staff = () => {
                         </div>
                       </div>
 
-                      {/* Actions */}
+                      {/* Actions - ONLY DELETE ICON */}
                       <div className="flex justify-end space-x-2 mt-6 pt-4 border-t border-gray-100">
-                        <button
-                          onClick={() => handleToggleStatus(member.id, member.is_active !== false)}
-                          className={`p-2 rounded-lg transition-colors ${
-                            member.is_active !== false
-                              ? 'hover:bg-yellow-50 text-yellow-600'
-                              : 'hover:bg-green-50 text-green-600'
-                          }`}
-                          title={member.is_active !== false ? 'Deactivate' : 'Activate'}
-                        >
-                          {member.is_active !== false ? (
-                            <XCircle className="w-4 h-4" />
-                          ) : (
-                            <CheckCircle className="w-4 h-4" />
-                          )}
-                        </button>
-                        <button 
-                          className="p-2 hover:bg-yellow-50 rounded-lg text-yellow-600 transition-colors"
-                          title="Edit"
-                        >
-                          <Edit className="w-4 h-4" />
-                        </button>
                         {user?.id !== member.id && (
                           <button 
                             onClick={() => handleDeleteClick(member)}
@@ -401,27 +365,12 @@ const Staff = () => {
                             )}
                           </td>
                           <td className="px-6 py-4 text-right">
-                            <button
-                              onClick={() => handleToggleStatus(member.id, member.is_active !== false)}
-                              className={`p-2 rounded-lg mr-1 ${
-                                member.is_active !== false
-                                  ? 'text-yellow-600 hover:bg-yellow-50'
-                                  : 'text-green-600 hover:bg-green-50'
-                              }`}
-                            >
-                              {member.is_active !== false ? (
-                                <XCircle className="w-4 h-4" />
-                              ) : (
-                                <CheckCircle className="w-4 h-4" />
-                              )}
-                            </button>
-                            <button className="p-2 hover:bg-yellow-50 rounded-lg text-yellow-600 mr-1">
-                              <Edit className="w-4 h-4" />
-                            </button>
+                            {/* ONLY DELETE ICON */}
                             {user?.id !== member.id && (
                               <button 
                                 onClick={() => handleDeleteClick(member)}
                                 className="p-2 hover:bg-red-50 rounded-lg text-red-600"
+                                title="Delete"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>

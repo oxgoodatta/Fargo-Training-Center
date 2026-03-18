@@ -20,6 +20,19 @@ const AddCourseModal = ({ isOpen, onClose, onSuccess }) => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
+  // Helper function to round to 2 decimal places
+  const roundToTwoDecimals = (value) => {
+    return Math.round((parseFloat(value) || 0) * 100) / 100;
+  };
+
+  const handleFeeChange = (e) => {
+    const { name, value } = e.target;
+    // Allow empty string or valid number
+    if (value === '' || !isNaN(parseFloat(value))) {
+      setFormData(prev => ({ ...prev, [name]: value }));
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     
@@ -46,8 +59,8 @@ const AddCourseModal = ({ isOpen, onClose, onSuccess }) => {
         name: formData.name.trim(),
         description: formData.description.trim(),
         duration: formData.duration.trim(),
-        registration_fee: parseFloat(formData.registration_fee),
-        tuition_fee: parseFloat(formData.tuition_fee)
+        registration_fee: roundToTwoDecimals(formData.registration_fee),
+        tuition_fee: roundToTwoDecimals(formData.tuition_fee)
       };
       
       // POST to /api/courses/ (matches your backend)
@@ -177,7 +190,7 @@ const AddCourseModal = ({ isOpen, onClose, onSuccess }) => {
                 </div>
               </div>
 
-              {/* Fees */}
+              {/* Fees - FIXED SCROLL ISSUE */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -189,7 +202,8 @@ const AddCourseModal = ({ isOpen, onClose, onSuccess }) => {
                       type="number"
                       name="registration_fee"
                       value={formData.registration_fee}
-                      onChange={handleChange}
+                      onChange={handleFeeChange}
+                      onWheel={(e) => e.target.blur()} // Prevents scroll wheel from changing value
                       className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-secondary-400 focus:border-transparent"
                       placeholder="0.00"
                       min="0"
@@ -208,7 +222,8 @@ const AddCourseModal = ({ isOpen, onClose, onSuccess }) => {
                       type="number"
                       name="tuition_fee"
                       value={formData.tuition_fee}
-                      onChange={handleChange}
+                      onChange={handleFeeChange}
+                      onWheel={(e) => e.target.blur()} // Prevents scroll wheel from changing value
                       className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-secondary-400 focus:border-transparent"
                       placeholder="0.00"
                       min="0"

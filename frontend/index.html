@@ -4,10 +4,34 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Fargo TC" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#f97316" />
+    
+    <!-- Manifest -->
+    <link rel="manifest" href="/manifest.json" />
+    
+    <!-- iOS Icons -->
+    <link rel="apple-touch-icon" href="/icons/launchericon-192x192.png" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/icons/launchericon-152x152.png" />
+    
+    <title>Fargo Training Center</title>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/service-worker.js')
+            .then(reg => console.log('Service Worker registered!'))
+            .catch(err => console.log('Service Worker failed:', err));
+        });
+      }
+    </script>
   </body>
 </html>

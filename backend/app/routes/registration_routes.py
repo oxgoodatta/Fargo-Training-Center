@@ -5,25 +5,44 @@ from datetime import datetime
 import re
 import csv
 from io import StringIO
+import time  # Add this for timestamp fallback
 
 bp = Blueprint('registrations', __name__)
 
 def generate_registration_number():
-    """Generate unique registration number: REG-YYYY-XXX"""
+    """Generate unique registration number: REG-YYYY-XXXXXX (unlimited)"""
     year = datetime.now().year
-    last_reg = Registration.query.order_by(Registration.id.desc()).first()
     
-    if last_reg and last_reg.registration_number:
-        # Extract sequence number from existing ID
-        match = re.search(r'REG-\d{4}-(\d{3})', last_reg.registration_number)
-        if match:
-            sequence = int(match.group(1)) + 1
+    # Try up to 10 times to generate a unique reference
+    for attempt in range(10):
+        # Get the latest registration overall (not just for this year)
+        last_reg = Registration.query.order_by(Registration.id.desc()).first()
+        
+        if last_reg and last_reg.registration_number:
+            # Try to extract number from any format
+            match = re.search(r'(\d+)$', last_reg.registration_number)
+            if match:
+                # Get the last number and increment
+                last_number = int(match.group(1))
+                sequence = last_number + 1
+            else:
+                # Fallback to ID if pattern not found
+                sequence = last_reg.id + 1
         else:
+            # First registration ever
             sequence = 1
-    else:
-        sequence = 1
+        
+        # Format with 6 digits (000001 to 999999 - practically unlimited)
+        registration_number = f"REG-{year}-{sequence:06d}"
+        
+        # Check if this number already exists (extra safety)
+        existing = Registration.query.filter_by(registration_number=registration_number).first()
+        if not existing:
+            return registration_number
     
-    return f"REG-{year}-{sequence:03d}"
+    # If all attempts fail, use timestamp as fallback
+    timestamp = int(time.time())
+    return f"REG-{year}-{timestamp}"
 
 @bp.route('/', methods=['POST'])
 def create_registration():
@@ -76,7 +95,7 @@ def create_registration():
         # Calculate outstanding balance
         outstanding_balance = total_course_fee - (reg_fee_paid + tuition_fee_paid)
         
-        # Generate registration number
+        # Generate registration number (now unlimited)
         registration_number = generate_registration_number()
         
         # Parse registration date
@@ -128,7 +147,7 @@ def create_registration():
         # Create payment record if amount was paid
         if amount_paid > 0:
             try:
-                payment_reference = f"PAY-{datetime.now().year}-{new_registration.id:03d}"
+                payment_reference = f"PAY-{datetime.now().year}-{new_registration.id:06d}"
                 
                 payment = FeePayment(
                     payment_reference=payment_reference,
@@ -309,7 +328,7 @@ def get_monthly_registrations():
             # Write header
             cw.writerow([
                 'Registration Number', 'Student ID', 'Student Name', 'Course',
-                'Registration Date', 'Branch', 'Location', 'Registration Fee',
+                'Registration Date', 'Branch', 'Location',
                 'Tuition Paid', 'Total Fee', 'Outstanding', 'Status', 'Registered By'
             ])
             
@@ -334,7 +353,6 @@ def get_monthly_registrations():
                     reg.registration_date.strftime('%Y-%m-%d'),
                     reg.branch,
                     reg.payment_location,
-                    f"{reg.registration_fee:.2f}",
                     f"{reg.tuition_fee_paid:.2f}",
                     f"{reg.total_fee:.2f}",
                     f"{reg.outstanding_balance:.2f}",

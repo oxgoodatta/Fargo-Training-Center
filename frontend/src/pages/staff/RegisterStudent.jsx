@@ -249,6 +249,12 @@ const RegisterStudent = () => {
     return Math.round((value || 0) * 100) / 100;
   };
 
+  // Helper function to check if amount is valid (at least 100 GHS)
+  const isAmountValid = () => {
+    const amount = parseFloat(formData.amount_paid);
+    return !isNaN(amount) && amount >= 100;
+  };
+
   const handleSubmit = async () => {
     if (!signatureData) {
       toast.error('Signature is required');
@@ -257,6 +263,12 @@ const RegisterStudent = () => {
 
     if (!formData.amount_paid || parseFloat(formData.amount_paid) <= 0) {
       toast.error('Please enter a valid amount');
+      return;
+    }
+
+    // Check minimum amount
+    if (!isAmountValid()) {
+      toast.error('Minimum payment amount is ₵100.00');
       return;
     }
 
@@ -750,7 +762,7 @@ const RegisterStudent = () => {
             </div>
           )}
 
-          {/* Step 4: Payment with Transaction ID - FIXED SCROLL ISSUE */}
+          {/* Step 4: Payment with Transaction ID - WITH MINIMUM AMOUNT VALIDATION */}
           {step === 4 && selectedCourse && (
             <div className="space-y-4">
               <div className="bg-blue-50 p-4 rounded-lg">
@@ -763,6 +775,10 @@ const RegisterStudent = () => {
                     Signature verified
                   </p>
                 )}
+                <p className="text-xs text-blue-600 mt-2 flex items-center">
+                  <AlertCircle className="w-3 h-3 mr-1" />
+                  Minimum payment: ₵100.00
+                </p>
               </div>
 
               <div>
@@ -865,7 +881,7 @@ const RegisterStudent = () => {
                     )}
                   </div>
 
-                  {/* FIXED: Amount field for MoMo - with scroll prevention */}
+                  {/* FIXED: Amount field for MoMo - with scroll prevention and minimum validation */}
                   <div>
                     <label className="block text-sm font-medium mb-2">Amount Paid (₵) *</label>
                     <input
@@ -890,11 +906,17 @@ const RegisterStudent = () => {
                       className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
                       placeholder="Enter amount paid"
                     />
+                    {formData.amount_paid && parseFloat(formData.amount_paid) < 100 && (
+                      <p className="text-xs text-red-600 mt-1 flex items-center">
+                        <AlertCircle className="w-3 h-3 mr-1" />
+                        Minimum payment amount is ₵100.00
+                      </p>
+                    )}
                   </div>
                 </>
               )}
 
-              {/* FIXED: Amount field for Cash - with scroll prevention */}
+              {/* FIXED: Amount field for Cash - with scroll prevention and minimum validation */}
               {formData.payment_method === 'cash' && (
                 <div>
                   <label className="block text-sm font-medium mb-2">Amount Paid (₵) *</label>
@@ -920,6 +942,12 @@ const RegisterStudent = () => {
                     className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-secondary-400"
                     placeholder="Enter amount paid"
                   />
+                  {formData.amount_paid && parseFloat(formData.amount_paid) < 100 && (
+                    <p className="text-xs text-red-600 mt-1 flex items-center">
+                      <AlertCircle className="w-3 h-3 mr-1" />
+                      Minimum payment amount is ₵100.00
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -960,6 +988,12 @@ const RegisterStudent = () => {
                       <span>Amount Paid:</span>
                       <span className="font-medium text-green-600">{formatCurrency(amountPaidNum)}</span>
                     </div>
+                    {amountPaidNum < 100 && (
+                      <div className="flex justify-between text-red-600">
+                        <span>⚠️ Minimum not met:</span>
+                        <span>Need ₵100.00 minimum</span>
+                      </div>
+                    )}
                     <div className="border-t border-gray-200 my-1 pt-1">
                       <div className="flex justify-between font-semibold">
                         <span>Allocation:</span>
@@ -1006,8 +1040,8 @@ const RegisterStudent = () => {
             ) : (
               <button
                 onClick={handleSubmit}
-                disabled={loading || !signatureData || !formData.amount_paid || parseFloat(formData.amount_paid) <= 0}
-                className="px-6 py-2 bg-gradient-to-r from-secondary-500 to-secondary-600 text-white rounded-lg hover:shadow-lg disabled:opacity-50"
+                disabled={loading || !signatureData || !formData.amount_paid || parseFloat(formData.amount_paid) <= 0 || !isAmountValid()}
+                className="px-6 py-2 bg-gradient-to-r from-secondary-500 to-secondary-600 text-white rounded-lg hover:shadow-lg disabled:opacity-50 disabled:bg-gray-400 disabled:from-gray-400 disabled:to-gray-500"
               >
                 {loading ? 'Processing...' : 'Complete Registration'}
               </button>

@@ -409,14 +409,6 @@ const Registrations = () => {
           </div>
           <div className="flex flex-wrap gap-2">
             <button
-              onClick={handleViewMonthlyReport}
-              disabled={reportLoading}
-              className="px-3 md:px-4 py-1.5 md:py-2 bg-primary-50 text-primary-700 border border-primary-200 rounded-lg text-xs md:text-sm hover:bg-primary-100 transition-all flex items-center disabled:opacity-50"
-            >
-              <FileText className="w-4 h-4 mr-1.5" />
-              {reportLoading ? 'Loading...' : 'View Report'}
-            </button>
-            <button
               onClick={handleDownloadCSV}
               disabled={downloading}
               className="px-3 md:px-4 py-1.5 md:py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-xs md:text-sm hover:bg-gray-50 transition-all flex items-center disabled:opacity-50"

@@ -2,11 +2,24 @@ import React from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { authService } from '../../api/services/authService';
 
-// Simple placeholder components
+// Logo URL - using the same logo from login page
+const logoUrl = '/images/logo.jpeg';
+
 const StaffSidebarComponent = () => (
   <div className="w-64 bg-white border-r border-gray-200 min-h-screen p-6">
-    <h2 className="text-xl font-bold text-primary-800">Staff Portal</h2>
-    <p className="text-sm text-primary-500 mt-2">Limited access dashboard</p>
+    <div className="flex items-center space-x-3 mb-4">
+      <div className="w-10 h-10 rounded-lg overflow-hidden bg-white border border-gray-200">
+        <img 
+          src={logoUrl} 
+          alt="Fargo Training Center" 
+          className="w-full h-full object-contain"
+        />
+      </div>
+      <div>
+        <h2 className="text-xl font-bold text-primary-800">Fargo Training</h2>
+        <p className="text-sm text-primary-500">Staff Portal</p>
+      </div>
+    </div>
   </div>
 );
 
